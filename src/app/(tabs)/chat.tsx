@@ -8,19 +8,28 @@ import {
   ScrollView,
   StyleSheet,
   View,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ChatActionsList } from '@/components/chat/chat-actions-sheet';
+import { PhotoComposer } from '@/components/chat/photo-composer';
 import { ChatComposer } from '@/components/chat/chat-composer';
 import { MessageBubble } from '@/components/chat/message-bubble';
 import { TaskMessageCard } from '@/components/chat/task-message-card';
 import { TaskComposerForm } from '@/components/tasks/task-composer';
-import { Avatar, EmptyState, Sheet, Text } from '@/components/ui';
+import { Avatar, ConfirmDialog, EmptyState, Sheet, Text } from '@/components/ui';
 import { dayLabel } from '@/data/format';
 import type { TaskStatus } from '@/data/types';
 import { errorText } from '@/services/result';
-import { pickAndCompressImage, uploadChatImage } from '@/services/chatMediaService';
+import {
+  compressImage,
+  newMessageId,
+  pickImage,
+  uploadChatImage,
+  type PickedAsset,
+} from '@/services/chatMediaService';
 import { groupByDay } from '@/services/chatService';
 import { useAuth } from '@/hooks/useAuth';
 import { useFamily } from '@/hooks/useFamily';
@@ -31,7 +40,8 @@ import { useTranslation } from '@/hooks/use-translation';
 import { MaxContentWidth, Spacing } from '@/theme';
 
 /**
- * How long to wait for the actions sheet to finish sliding away.
+ * How long to wait for one modal to finish sliding away before presenting the
+ * next.
  *
  * The picker is presented by the OS from the same root view controller the
  * `Sheet`'s `Modal` is dismissing from, and asking iOS to present over a
@@ -40,13 +50,48 @@ import { MaxContentWidth, Spacing } from '@/theme';
  * single `Sheet`. `animationType="slide"` runs about 300 ms, so this waits it
  * out rather than racing it. Android and web present their pickers as their
  * own activity or a file input and need no such gap.
+ *
+ * It is now paid **twice**, in both directions: the sheet closes before the
+ * picker opens, and the picker closes before the sheet comes back holding the
+ * confirmation step. The second one is the same hazard with the roles swapped
+ * — our `Modal` presenting over the picker's dismissal — and skipping it is a
+ * sheet that never appears, leaving a photo picked and nothing to send it with.
  */
-const SHEET_DISMISS_MS = 350;
+const MODAL_DISMISS_MS = 350;
 
-const sheetDismissed = () =>
+const modalDismissed = () =>
   Platform.OS === 'ios'
-    ? new Promise((resolve) => setTimeout(resolve, SHEET_DISMISS_MS))
+    ? new Promise((resolve) => setTimeout(resolve, MODAL_DISMISS_MS))
     : Promise.resolve();
+
+/**
+ * How far the conversation must actually travel under the finger before the
+ * drag is read as "I have stopped typing" and the keyboard is put away.
+ *
+ * `keyboardDismissMode="on-drag"` — what this screen used to carry — fires on
+ * `onScrollBeginDrag`, which lands the moment a touch moves by a pixel. It has
+ * no notion of distance, so nudging the list to read the line above the
+ * composer, or brushing it on the way to a bubble, closed the keyboard and lost
+ * the draft's place. RN's own source names a second cost on Android
+ * (`ScrollView.js`, `_handleScrollBeginDrag`): that event also fires when a
+ * finger *stops* momentum, so tapping to halt a fling dismissed the keyboard
+ * too.
+ *
+ * 28 px is above thumb jitter and the few pixels a scroll view gives back when
+ * a touch lands on a moving list, and well under a deliberate flick — the same
+ * order as a platform pan slop, which is the threshold this is standing in for.
+ *
+ * iOS's native `interactive` was the other candidate and is what WhatsApp uses,
+ * but it does not survive contact with `KeyboardAvoidingView`: that component
+ * subscribes to `keyboardWillShow`/`keyboardWillHide` only (see its
+ * `componentDidMount`), and an interactive dismissal reports its progress as
+ * `keyboardWillChangeFrame`, so the composer would hold its full keyboard-height
+ * padding — visibly detaching from the keyboard sliding away beneath it — until
+ * the gesture committed. Tracking the frame properly means
+ * `react-native-keyboard-controller`, which is a dependency this project has
+ * argued itself out of adding for less.
+ */
+const KEYBOARD_DISMISS_DRAG_PX = 28;
 
 /**
  * Family chat, and the app's primary way of creating a task.
@@ -73,9 +118,13 @@ export default function ChatScreen() {
     getMember,
     isLoading,
     sendMessage,
+    beginImage,
+    discardImage,
     sendImage,
+    deleteMessage,
     createTask,
     setTaskStatus,
+    currentMember,
   } = useFamily();
   const scrollRef = useRef<ScrollView>(null);
   const isMounted = useIsMounted();
@@ -111,18 +160,37 @@ export default function ChatScreen() {
   // refusing after it has been filled in.
   const hasFamily = !!profile?.family_id;
 
-  // One sheet, three states — not two sheets. Dismissing a native modal while
+  // One sheet, four states — not four sheets. Dismissing a native modal while
   // presenting another in the same frame is unreliable on iOS, so "Create task"
-  // changes what the open sheet holds rather than handing off to a second one.
-  const [sheet, setSheet] = useState<'none' | 'actions' | 'task'>('none');
+  // and the photo confirmation each change what the open sheet holds rather
+  // than handing off to a second one.
+  const [sheet, setSheet] = useState<'none' | 'actions' | 'task' | 'photo'>('none');
   const [busyTaskId, setBusyTaskId] = useState<string | null>(null);
 
   // The photo flow outlives the sheet that starts it — the picker closes it —
   // so its progress and its failure belong to the screen, in the strip above
   // the composer. `ChatComposer` keeps its own error slot for the draft it
   // owns; a photo has no draft to preserve, so the two never share a line.
-  const [isSendingPhoto, setIsSendingPhoto] = useState(false);
+  /**
+   * `preparing` is the picker and the gaps either side of it, which have
+   * nothing to show yet; `uploading` is the compress-and-transfer, which has a
+   * bubble showing it. See `pickPhoto` and `confirmPhoto` for why the
+   * difference is worth a third value over a boolean.
+   */
+  const [photoStage, setPhotoStage] = useState<'idle' | 'preparing' | 'uploading'>('idle');
   const [photoError, setPhotoError] = useState<string | null>(null);
+
+  /** The picked file waiting on the confirmation sheet. Never uploaded as-is. */
+  const [pendingAsset, setPendingAsset] = useState<PickedAsset | null>(null);
+
+  /** The message a long press asked about, plus that dialog's own two states. */
+  const [pendingDelete, setPendingDelete] = useState<string | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  // The sheet's row stays busy for the whole flow — re-opening it mid-upload
+  // and finding "Send photo" ready to press again would invite a second one.
+  const isSendingPhoto = photoStage !== 'idle';
 
   const days = useMemo(() => groupByDay(messages), [messages]);
   const onlineCount = members.filter((member) => member.presence === 'online').length;
@@ -138,6 +206,40 @@ export default function ChatScreen() {
 
     return index;
   }, [tasks]);
+
+  /**
+   * Where the list stood when the current drag started, or null when no finger
+   * is driving it — which is also what makes momentum and the `scrollToEnd`
+   * below unable to dismiss anything. Cleared once a drag has dismissed, so one
+   * continuous drag can only spend the keyboard once.
+   *
+   * A ref rather than state: it changes on every scroll frame and nothing
+   * renders from it.
+   */
+  const dragOrigin = useRef<number | null>(null);
+
+  const handleScrollBeginDrag = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    dragOrigin.current = event.nativeEvent.contentOffset.y;
+  }, []);
+
+  /**
+   * The intent test. Either direction counts — reading back through the day and
+   * chasing the newest message are both somebody looking rather than typing —
+   * but only past `KEYBOARD_DISMISS_DRAG_PX`.
+   */
+  const handleScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const origin = dragOrigin.current;
+
+    if (origin === null) return;
+    if (Math.abs(event.nativeEvent.contentOffset.y - origin) < KEYBOARD_DISMISS_DRAG_PX) return;
+
+    dragOrigin.current = null;
+    Keyboard.dismiss();
+  }, []);
+
+  const handleScrollEndDrag = useCallback(() => {
+    dragOrigin.current = null;
+  }, []);
 
   /**
    * Which status a press means is `TaskStatusActions`' business — it owns the
@@ -165,52 +267,152 @@ export default function ChatScreen() {
    * The sheet closes *first*. The picker is the OS's own modal, and presenting
    * it over a live RN `Modal` is the same unreliable-on-iOS problem this
    * screen's one-sheet rule exists to avoid.
+   *
+   * **Picking no longer sends.** This half stops at the confirmation sheet: it
+   * opens the picker and, if something comes back, puts the sheet up again in
+   * `photo` mode holding the original file. Nothing is compressed, nothing is
+   * uploaded and no row exists yet, so backing out of that sheet costs one
+   * discarded selection and no network at all.
+   *
+   * The strip above the composer carries this half, because there is nothing
+   * else on screen to show for it — the picker is the OS's own surface and the
+   * gap on either side of it is ours.
    */
-  const sendPhoto = useCallback(async () => {
+  const pickPhoto = useCallback(async () => {
     setSheet('none');
     setPhotoError(null);
 
     if (!profile?.family_id) return;
 
-    setIsSendingPhoto(true);
+    setPhotoStage('preparing');
 
-    await sheetDismissed();
+    await modalDismissed();
 
     if (!isMounted()) return;
 
-    const picked = await pickAndCompressImage();
+    const picked = await pickImage();
 
     if (!isMounted()) return;
 
     if (picked.error) {
       setPhotoError(errorText(i18n, picked.error));
-      setIsSendingPhoto(false);
+      setPhotoStage('idle');
       return;
     }
 
     // Null data with no error is a cancel, which is an answer and not a fault.
     if (!picked.data) {
-      setIsSendingPhoto(false);
+      setPhotoStage('idle');
       return;
     }
 
-    const uploaded = await uploadChatImage(profile.family_id, picked.data);
+    // The picker's own dismissal has to finish before our sheet is presented
+    // over the same controller — see `MODAL_DISMISS_MS`.
+    await modalDismissed();
 
     if (!isMounted()) return;
 
-    if (uploaded.error) {
-      setPhotoError(errorText(i18n, uploaded.error));
-      setIsSendingPhoto(false);
+    setPendingAsset(picked.data);
+    setPhotoStage('idle');
+    setSheet('photo');
+  }, [i18n, isMounted, profile?.family_id]);
+
+  /**
+   * The other half: what "Send" in the confirmation sheet actually does.
+   *
+   * Compress, upload, post — and the bubble goes up *first*, on the original
+   * file, so the photo is in the conversation from the moment the user commits
+   * to it rather than after a re-encode they have no reason to wait through.
+   * The two files look the same; the compressed one differs only in bytes.
+   *
+   * Every failure takes the bubble back out and reports itself in the strip,
+   * which is the one thing the bubble cannot do for itself.
+   */
+  const confirmPhoto = useCallback(
+    async (caption: string) => {
+      const asset = pendingAsset;
+
+      setSheet('none');
+      setPendingAsset(null);
+
+      if (!asset || !profile?.family_id) return;
+
+      // Decided once, used three times: the placeholder, the object name and
+      // the row's primary key are one id, which is what lets the confirmed
+      // message replace the bubble instead of arriving underneath it.
+      const messageId = newMessageId();
+
+      // The photo joins the conversation here, before a byte has been sent.
+      beginImage(messageId, asset.uri, caption);
+      setPhotoStage('uploading');
+
+      const compressed = await compressImage(asset);
+
+      if (compressed.error) {
+        // Unguarded by `isMounted`: the placeholder is in the family context,
+        // not in this screen, so leaving the tab mid-send must still take it
+        // back out — otherwise it sits there as a photo that is forever going.
+        discardImage(messageId);
+
+        if (!isMounted()) return;
+
+        setPhotoError(errorText(i18n, compressed.error));
+        setPhotoStage('idle');
+        return;
+      }
+
+      const uploaded = await uploadChatImage(profile.family_id, messageId, compressed.data);
+
+      if (uploaded.error) {
+        discardImage(messageId);
+
+        if (!isMounted()) return;
+
+        setPhotoError(errorText(i18n, uploaded.error));
+        setPhotoStage('idle');
+        return;
+      }
+
+      // `sendImage` removes the placeholder itself if the insert fails, for the
+      // same reason and with the same indifference to this screen being mounted.
+      const failure = await sendImage(messageId, uploaded.data, caption);
+
+      if (!isMounted()) return;
+
+      setPhotoError(failure);
+      setPhotoStage('idle');
+    },
+    [beginImage, discardImage, i18n, isMounted, pendingAsset, profile?.family_id, sendImage],
+  );
+
+  /**
+   * Long-pressing a bubble asks to delete it; this is the answer.
+   *
+   * The write stays *inside* `ConfirmDialog` — the dialog holds its own
+   * spinner and renders a refusal in place rather than dismissing and leaving
+   * the failure to be reported somewhere else. `deleteMessage` is optimistic,
+   * so the bubble is already gone by the time this resolves; on a refusal it
+   * comes back and the reason appears in the dialog that is still open.
+   */
+  const confirmDelete = useCallback(async () => {
+    if (!pendingDelete) return;
+
+    setDeleteError(null);
+    setIsDeleting(true);
+
+    const failure = await deleteMessage(pendingDelete);
+
+    if (!isMounted()) return;
+
+    setIsDeleting(false);
+
+    if (failure) {
+      setDeleteError(failure);
       return;
     }
 
-    const failure = await sendImage(uploaded.data);
-
-    if (!isMounted()) return;
-
-    setPhotoError(failure);
-    setIsSendingPhoto(false);
-  }, [i18n, isMounted, profile?.family_id, sendImage]);
+    setPendingDelete(null);
+  }, [deleteMessage, isMounted, pendingDelete]);
 
   return (
     <SafeAreaView style={[styles.flex, { backgroundColor: colors.background }]} edges={['top']}>
@@ -260,6 +462,23 @@ export default function ChatScreen() {
             style={styles.flex}
             contentContainerStyle={styles.messages}
             showsVerticalScrollIndicator={false}
+            // Dragging the conversation still puts the keyboard away, in
+            // either direction — reading back through the day is the clearest
+            // signal that somebody has stopped typing. But *this screen*
+            // decides when a drag has meant it, so the built-in mode is off;
+            // see `KEYBOARD_DISMISS_DRAG_PX`.
+            keyboardDismissMode="none"
+            onScrollBeginDrag={handleScrollBeginDrag}
+            onScroll={handleScroll}
+            onScrollEndDrag={handleScrollEndDrag}
+            // iOS sends `onScroll` once per drag at the default 0, which would
+            // leave the test above reading only the first frame of a gesture.
+            scrollEventThrottle={16}
+            // A tap that lands on something still counts, and one that lands on
+            // nothing dismisses — which is the "tap outside" half. Without this
+            // the first tap anywhere in the list is swallowed, so opening a
+            // photo or long-pressing a bubble would need two.
+            keyboardShouldPersistTaps="handled"
             onContentSizeChange={() => scrollRef.current?.scrollToEnd({ animated: false })}>
             {days.map((day) => (
               <View key={day.key}>
@@ -298,6 +517,16 @@ export default function ChatScreen() {
                       message={message}
                       sender={getMember(message.senderId)}
                       isOwn={isOwn}
+                      // Mirrors `messages: delete own or admin`, which is the
+                      // policy that actually decides. Unlike `canActOnTask`
+                      // this is not a courtesy over a permissive policy — a
+                      // non-owner who got past it would have the delete refused
+                      // by RLS and the bubble put back.
+                      canDelete={isOwn || !!currentMember?.isAdmin}
+                      onRequestDelete={() => {
+                        setDeleteError(null);
+                        setPendingDelete(message.id);
+                      }}
                       // Only label the first message in a run from the same
                       // person — but a task card breaks the run, so the bubble
                       // under one is labelled again even from the same sender.
@@ -313,13 +542,18 @@ export default function ChatScreen() {
           </ScrollView>
         )}
 
-        {isSendingPhoto || photoError ? (
+        {/*
+          Only while there is no bubble to look at, plus failures. Once the
+          photo is in the stream under its own veil this strip would be the
+          second place on one screen saying the upload is running.
+        */}
+        {photoStage === 'preparing' || photoError ? (
           <View
             style={[
               styles.photoStatus,
               { backgroundColor: colors.surface, borderTopColor: colors.border },
             ]}>
-            {isSendingPhoto ? <ActivityIndicator size="small" color={colors.textTertiary} /> : null}
+            {photoError ? null : <ActivityIndicator size="small" color={colors.textTertiary} />}
             <Text variant="caption" color={photoError ? 'danger' : 'textSecondary'} style={styles.flex}>
               {photoError ?? t('chat.photoUploading')}
             </Text>
@@ -344,7 +578,7 @@ export default function ChatScreen() {
             isPremium={isPremium}
             isSendingPhoto={isSendingPhoto}
             onCreateTask={() => setSheet('task')}
-            onSendPhoto={() => void sendPhoto()}
+            onSendPhoto={() => void pickPhoto()}
             /*
               Closed before the push, for the reason the Map's place sheet
               closes before the same push: the paywall is presented as a modal,
@@ -367,7 +601,42 @@ export default function ChatScreen() {
             onClose={() => setSheet('none')}
           />
         ) : null}
+
+        {/* Same reason it is unmounted on close: the caption lives in the
+            composer's own state, so discarding the selection discards the
+            draft with it rather than leaving it to greet the next photo. */}
+        {sheet === 'photo' && pendingAsset ? (
+          <PhotoComposer
+            asset={pendingAsset}
+            onCancel={() => {
+              setSheet('none');
+              setPendingAsset(null);
+            }}
+            onSend={(caption) => void confirmPhoto(caption)}
+          />
+        ) : null}
       </Sheet>
+
+      {/*
+        The screen owns one dialog rather than each bubble owning its own: a
+        `Modal` per message would mount two hundred of them to ask one question.
+        It can never be open at the same time as the `Sheet` above — a long
+        press happens on the message list, which the sheet covers.
+      */}
+      <ConfirmDialog
+        visible={pendingDelete !== null}
+        title={t('chat.deleteTitle')}
+        message={t('chat.deleteMessage')}
+        confirmLabel={t('chat.deleteConfirm')}
+        tone="danger"
+        loading={isDeleting}
+        error={deleteError}
+        onConfirm={() => void confirmDelete()}
+        onCancel={() => {
+          setPendingDelete(null);
+          setDeleteError(null);
+        }}
+      />
     </SafeAreaView>
   );
 }
