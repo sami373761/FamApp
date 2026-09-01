@@ -1006,9 +1006,9 @@ localised number with nothing behind it would be invented twice. The product nam
 ### Realtime
 
 **One websocket, one channel, keyed on the family.** `src/services/realtimeService.ts`
-opens `family-${familyId}` and binds eight `postgres_changes` listeners — `messages`
-(INSERT/DELETE), `tasks` (INSERT/UPDATE/DELETE), `locations` (INSERT/UPDATE) and `profiles`
-(UPDATE) — each filtered `family_id=eq.…`. It is a service like every other: the socket
+opens `family-${familyId}` and binds nine `postgres_changes` listeners — `messages`
+(INSERT/DELETE), `tasks` (INSERT/UPDATE/DELETE), `locations` (INSERT/UPDATE/DELETE) and
+`profiles` (UPDATE) — each filtered `family_id=eq.…`. It is a service like every other: the socket
 is network, so it lives here and `FamilyContext` never touches `supabase`. What it hands
 up is domain types through the **same mappers the fetching services use**
 (`toChatMessage`, `toFamilyTask`, `toMemberLocation`), so a row off the socket is
@@ -1028,11 +1028,10 @@ to do, so React skips the render. They also keep the fetch order: tasks re-sort 
 
 `withMessage` has the one exception to "same id means ignore it": a confirmed row landing on a
 **pending** one replaces it, which is what retires an optimistic photo bubble (see Chat photos).
-`withoutMessage` is likewise not a general delete — nothing removes a real message, and no delete
-listener could hear it anyway, since only `messages` and `tasks` carry `replica identity full`;
-it exists to take that bubble back when the send fails.
+`withoutMessage` is likewise not a general delete — it exists to take that bubble back when the
+send fails, and to answer the socket's DELETE for a message somebody removed.
 
-Three things fall out of the schema rather than out of preference:
+Four things fall out of the schema rather than out of preference:
 
 - **A timestamp off the WAL is not the ISO 8601 PostgREST returns.** Postgres' own text
   format (`2026-08-25 12:00:00.123456+00`) breaks both `Date.parse` (presence, due dates)
@@ -1040,15 +1039,21 @@ Three things fall out of the schema rather than out of preference:
   every incoming message would file at the top of its day. `toIsoTimestamp` **repairs**
   rather than reformats: a value already in PostgREST's shape comes back byte for byte,
   which is what lets fetched and streamed rows share one sorted list.
-- **Nothing listens for a delete on `locations` or `profiles`.** Only `messages` and
-  `tasks` carry `replica identity full` (see the Realtime block in the init migration), so
-  a delete elsewhere sends the primary key alone — the `family_id` filter cannot match it
-  and the event is never delivered. Two consequences: switching location sharing off
-  clears the pin on the *owner's* device only, and a member being removed (or leaving)
-  reaches everyone else on the next refresh. Both are `replica identity full` migrations
-  away, and neither should be faked client-side. **`messages` does have it**, which is
-  what lets a deleted message vanish from every device live rather than on next refresh —
-  the delete listener is the one thing message deletion needed from this layer.
+- **A delete is only deliverable from a table with `replica identity full`.** It is
+  published as the *old* row and the filter is matched against that row, so under the
+  default identity the payload is the primary key alone, `family_id=eq.…` has nothing to
+  match, and the event is never sent at all. `messages` and `tasks` carry it from the init
+  migration; `locations` gained it in `20260901110000_locations_replica_identity.sql`, which
+  is what lets switching location sharing off — `clearOwnLocation()` **deletes** the row —
+  take the pin off every member's map rather than only the owner's. The cost is that FULL
+  logs the old row on every UPDATE too, which is cheap on a table holding one upserted row
+  per member on a 12-minute cadence, and would not be on a hot one.
+- **`profiles` does not have it, and would not be helped by it.** A member being removed (or
+  leaving) is an UPDATE clearing `family_id`, not a delete, and an update's filter is matched
+  against the **new** row — which no longer names this family — so no replica identity can
+  deliver it, and RLS would withhold the row from the remaining members regardless. That one
+  genuinely does reach everyone else on the next refresh, and closing it means a broadcast
+  from a trigger rather than a client-side guess. Do not fake it.
 - **A member joining arrives as a `profiles` UPDATE**, because the row already existed and
   `join_family` only sets its `family_id`. `withProfile` therefore *adds* an unknown id
   rather than ignoring it, and the roster gains the new member live.
@@ -1070,7 +1075,7 @@ calls `realtime.setAuth`.
 
 ## Backend (Supabase)
 
-`supabase/` holds twelve migrations, two Edge Functions, `templates/confirmation.html` and a README
+`supabase/` holds thirteen migrations, two Edge Functions, `templates/confirmation.html` and a README
 covering setup. The **migrations** are applied to the live project — treat them as history and
 add a new one rather than editing an applied file. That includes
 `20260825140000_family_premium_tier.sql`: it is pushed, `db advisors --type security`

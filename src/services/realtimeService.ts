@@ -20,11 +20,15 @@
  * and the provider answers it with a re-read.
  *
  * Server side this needs the table in the `supabase_realtime` publication —
- * all four are, from the initial migration, which also sets REPLICA IDENTITY
- * FULL on `messages` and `tasks` so a delete carries the old row. `locations`
- * and `profiles` do not have it, which is why nothing here listens for a delete
- * on either: with only the primary key in `old`, the `family_id` filter cannot
- * match and the event is never delivered.
+ * all four are, from the initial migration — and REPLICA IDENTITY FULL on any
+ * table whose deletes have to arrive, because a delete is published as the old
+ * row and the default identity is the primary key alone, which the `family_id`
+ * filter has nothing to match against. `messages` and `tasks` have carried it
+ * since that migration and `locations` gained it in 20260901110000, so all
+ * three deliver a delete. `profiles` does not, and would not be helped by it:
+ * a member being removed is an UPDATE clearing `family_id`, and an update's
+ * filter is matched against the *new* row, which no longer names this family.
+ * That one still reaches the other devices on the next read.
  *
  * RLS applies to every event — the realtime server re-checks the subscriber's
  * own SELECT policies — so `family_id=eq.…` is an index filter, not a boundary.
@@ -52,14 +56,24 @@ export type FamilyRealtimeHandlers = {
    *
    * Deliverable only because `messages` carries `replica identity full`: the
    * `family_id` filter is matched against `old`, and a table without it sends
-   * the primary key alone, so the event would never arrive. That is the whole
-   * reason `locations` and `profiles` have no delete listener.
+   * the primary key alone, so the event would never arrive. `profiles` is the
+   * one table here still in that position, which is why it has no delete
+   * listener.
    */
   onMessageRemoved: (messageId: string) => void;
   /** Insert *and* update: both arrive as the whole row, so both mean "this is the task now". */
   onTask: (task: FamilyTask) => void;
   onTaskRemoved: (taskId: string) => void;
   onLocation: (memberId: string, location: MemberLocation) => void;
+  /**
+   * A member stopped sharing: `clearOwnLocation()` deletes the row rather than
+   * blanking it, so this is what takes the pin off everybody else's map.
+   *
+   * Deliverable only because `locations` carries `replica identity full`
+   * (20260901110000) — the same reason the two message and task removals above
+   * arrive at all.
+   */
+  onLocationRemoved: (memberId: string) => void;
   /** The raw row: a profile carries no position, and the roster's is the one to keep. */
   onProfile: (profile: ProfileRow) => void;
   /**
@@ -108,7 +122,7 @@ export function toIsoTimestamp(value: string): string {
 /**
  * Opens the family's channel and returns the function that closes it.
  *
- * One channel with eight bindings rather than one channel per table: the socket
+ * One channel with nine bindings rather than one channel per table: the socket
  * multiplexes them anyway, and a single topic means a single join, a single
  * rejoin, and one place to notice that the connection came back.
  */
@@ -165,6 +179,16 @@ export function subscribeToFamily(familyId: string, handlers: FamilyRealtimeHand
       'postgres_changes',
       { event: 'UPDATE', schema: 'public', table: 'locations', filter },
       ({ new: row }) => handlers.onLocation(row.user_id, toRealtimeLocation(row)),
+    )
+    .on<Row<'locations'>>(
+      'postgres_changes',
+      { event: 'DELETE', schema: 'public', table: 'locations', filter },
+      ({ old: row }) => {
+        // `old` is typed Partial because a table without REPLICA IDENTITY FULL
+        // sends only its key. `locations` has it, so the member id is really
+        // there — and the whole old row is what the filter above matched on.
+        if (row.user_id) handlers.onLocationRemoved(row.user_id);
+      },
     )
     .on<ProfileRow>(
       'postgres_changes',

@@ -1,0 +1,34 @@
+-- =============================================================================
+-- FamApp — a cleared position has to reach the other devices
+--
+-- Switching location sharing off calls `locationService.clearOwnLocation()`,
+-- which DELETEs the caller's `locations` row rather than blanking it: a stale
+-- pin left behind would keep claiming to know where somebody is. That delete
+-- was invisible to every other member until their next refresh, and the reason
+-- was this table's replica identity.
+--
+-- A DELETE is published from the WAL as the *old* row, and under the default
+-- replica identity (the primary key) that is `user_id` alone. The realtime
+-- server matches a subscriber's filter against the old row for a delete, so
+-- `family_id=eq.…` had nothing to match on and the event was never delivered —
+-- not dropped by the client, never sent. FULL publishes every column, which is
+-- what puts `family_id` in the payload and the payload on the socket.
+--
+-- `messages` and `tasks` have carried this since the initial migration
+-- (20260730120000, section 8) for the same reason, and `locations` was left out
+-- because nothing removed a row at the time. It does now.
+--
+-- Cost is a write-side one and is small here: FULL makes every UPDATE log the
+-- old row as well as the new. `locations` is one row per member, upserted at
+-- most once every 12 minutes by the tracker's own cadence, so this is a handful
+-- of rows per family and a few extra WAL bytes per fix — not the wide,
+-- hot table where FULL is a real expense.
+--
+-- `profiles` deliberately stays as it is. A member being removed is an UPDATE
+-- setting `family_id` to NULL, not a delete, and an UPDATE's filter is matched
+-- against the *new* row — which no longer names the family — so replica
+-- identity cannot reach that case, and RLS would withhold the row from the
+-- remaining members anyway. That gap needs a broadcast, not this.
+-- =============================================================================
+
+alter table public.locations replica identity full;

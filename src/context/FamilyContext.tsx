@@ -547,6 +547,11 @@ export function FamilyProvider({ children }: { children: ReactNode }) {
       onTaskRemoved: (taskId) => commit((previous) => withoutTask(previous, taskId)),
       onLocation: (memberId, location) =>
         commit((previous) => withLocation(previous, memberId, location)),
+      // Somebody switched sharing off, which deletes their row: the pin comes
+      // off this map too, not just theirs. `withLocation` already treats a null
+      // position as an absent one and recomputes presence from it.
+      onLocationRemoved: (memberId) =>
+        commit((previous) => withLocation(previous, memberId, null)),
       onProfile: (row) => commit((previous) => withProfile(previous, row)),
       // Nothing that happened while the socket was down is replayed, so a
       // rejoin is only a promise that events start again — the rows in between
