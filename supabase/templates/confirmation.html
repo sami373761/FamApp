@@ -1,0 +1,71 @@
+<!--
+  "Confirm signup" — the email GoTrue sends from `supabase.auth.signUp()`.
+
+  This template is the ONLY thing that decides whether a new user gets a
+  6-digit code or a confirmation link. GoTrue always mints both: `{{ .Token }}`
+  is the OTP (`auth.email.otp_length`, 6) and `{{ .ConfirmationURL }}` is a link
+  wrapping that same token. Rendering the token is what keeps verification
+  inside the app — `verifyEmailOtp()` in `src/services/authService.ts` redeems
+  it with `type: 'signup'`.
+
+  Do not add `{{ .ConfirmationURL }}` back alongside the code. Following the
+  link confirms the account in a browser that holds no session, leaving the app
+  sitting on a code that has already been spent.
+
+  Inline styles and a table only: no <style> block survives Gmail, and the
+  colours are literals because an email cannot read `src/theme/colors.ts`.
+  They are copies of `primary` (#22C063) and `text` (#1D1F1F) — if the brand
+  moves, move them here too.
+-->
+<table
+  role="presentation"
+  width="100%"
+  cellpadding="0"
+  cellspacing="0"
+  style="background-color: #ffffff; padding: 32px 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <tr>
+    <td align="center">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width: 480px">
+        <tr>
+          <td style="padding-bottom: 24px">
+            <h1 style="margin: 0; font-size: 24px; line-height: 32px; color: #1d1f1f">
+              Confirm your email
+            </h1>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding-bottom: 24px; font-size: 16px; line-height: 24px; color: #161717">
+            Enter this code in FamApp to finish creating your account.
+          </td>
+        </tr>
+        <tr>
+          <td
+            align="center"
+            style="
+              padding: 20px 0;
+              border: 1px solid #e1e3e3;
+              border-radius: 12px;
+              background-color: #f1f2f2;
+            ">
+            <span
+              style="
+                font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+                font-size: 32px;
+                font-weight: 700;
+                letter-spacing: 8px;
+                color: #22c063;
+              "
+              >{{ .Token }}</span
+            >
+          </td>
+        </tr>
+        <tr>
+          <td style="padding-top: 24px; font-size: 14px; line-height: 20px; color: #6b6f6f">
+            The code expires in one hour. If you did not sign up for FamApp, you can ignore this
+            email — no account is created until the code is entered.
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+</table>

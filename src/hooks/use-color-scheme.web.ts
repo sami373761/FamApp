@@ -8,6 +8,8 @@ export function useColorScheme() {
   const [hasHydrated, setHasHydrated] = useState(false);
 
   useEffect(() => {
+    // Intentional: this effect exists solely to detect that hydration has
+    // completed on the client, so the setState must run synchronously here.
     setHasHydrated(true);
   }, []);
 

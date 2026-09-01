@@ -26,6 +26,20 @@
     "plugins": [
       "expo-router",
       [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "FamApp shares your location with your family so they can see where you are on the map."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "FamApp needs access to your photos so you can send one to your family chat.",
+          "cameraPermission": "FamApp needs access to your camera so you can send a photo to your family chat."
+        }
+      ],
+      "expo-notifications",
+      [
         "expo-splash-screen",
         {
           "backgroundColor": "#208AEF",
