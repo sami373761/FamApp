@@ -14,19 +14,16 @@
  * reading `private.is_family_premium()`. Do not build anything on top of it
  * that assumes it holds.
  *
- * Content only, no `Sheet` of its own: Chat shows this and the task form in the
- * same sheet, because presenting one native modal while dismissing another in
- * the same frame is unreliable on iOS.
+ * Content only, no `Sheet` of its own: Chat shows this, the message menu and
+ * the task form in the same sheet, because presenting one native modal while
+ * dismissing another in the same frame is unreliable on iOS. The rows
+ * themselves are `ActionRow`, shared with the message menu.
  */
 
-import { Ionicons } from '@expo/vector-icons';
-import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
+import { View } from 'react-native';
 
-import { Badge } from '@/components/ui/badge';
-import { Text } from '@/components/ui/text';
-import { useTheme } from '@/hooks/use-theme';
+import { ActionRow, actionListStyles } from '@/components/chat/action-row';
 import { useTranslation } from '@/hooks/use-translation';
-import { Radius, Spacing } from '@/theme';
 
 type ChatActionsListProps = {
   /**
@@ -64,7 +61,7 @@ export function ChatActionsList({
   const photoLocked = !photoBlockedByFamily && !isPremium;
 
   return (
-    <View style={styles.list}>
+    <View style={actionListStyles.list}>
       <ActionRow
         icon="checkbox-outline"
         label={t('chatActions.createTask')}
@@ -103,86 +100,3 @@ export function ChatActionsList({
     </View>
   );
 }
-
-type ActionRowProps = {
-  icon: keyof typeof Ionicons.glyphMap;
-  label: string;
-  description: string;
-  /** A state, not a value — rendered in Gold's amber beside the label. */
-  badge?: string;
-  onPress?: () => void;
-  disabled?: boolean;
-  busy?: boolean;
-};
-
-function ActionRow({
-  icon,
-  label,
-  description,
-  badge,
-  onPress,
-  disabled = false,
-  busy = false,
-}: ActionRowProps) {
-  const { colors } = useTheme();
-  const inert = disabled || busy;
-
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityState={{ disabled: inert, busy }}
-      accessibilityLabel={label}
-      accessibilityHint={description}
-      disabled={inert}
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.row,
-        { backgroundColor: pressed ? colors.surfaceMuted : 'transparent' },
-        disabled && styles.disabled,
-      ]}>
-      <View style={[styles.icon, { backgroundColor: colors.surfaceMuted }]}>
-        <Ionicons name={icon} size={20} color={disabled ? colors.textTertiary : colors.primary} />
-      </View>
-
-      <View style={styles.text}>
-        <View style={styles.labelRow}>
-          <Text variant="bodyStrong" color={disabled ? 'textTertiary' : 'text'}>
-            {label}
-          </Text>
-          {badge ? <Badge label={badge} tone="warning" /> : null}
-        </View>
-        <Text variant="caption" color="textTertiary">
-          {description}
-        </Text>
-      </View>
-
-      {busy ? (
-        <ActivityIndicator size="small" color={colors.textTertiary} />
-      ) : disabled ? null : (
-        <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
-      )}
-    </Pressable>
-  );
-}
-
-const styles = StyleSheet.create({
-  list: { gap: Spacing.xs, paddingBottom: Spacing.sm },
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.md,
-    paddingVertical: Spacing.md,
-    paddingHorizontal: Spacing.sm,
-    borderRadius: Radius.md,
-  },
-  disabled: { opacity: 0.55 },
-  icon: {
-    width: 40,
-    height: 40,
-    borderRadius: Radius.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  text: { flex: 1, gap: 2 },
-  labelRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
-});

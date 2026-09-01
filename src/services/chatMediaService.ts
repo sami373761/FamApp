@@ -10,19 +10,30 @@
  * Three things here are decided by the schema rather than by preference, and
  * none of them is free to change on this side alone:
  *
- *   * **The object key is `<family_id>/<user_id>/<uuid>.jpg`.** Not
- *     `<family_id>/<uuid>.jpg` — `chat-media: upload to own path` checks
+ *   * **The object key is `<family_id>/<user_id>/<message_id>.webp`.** Not
+ *     `<family_id>/<message_id>.webp` — `chat-media: upload to own path` checks
  *     `foldername[1]` against the caller's family *and* `foldername[2]` against
- *     `auth.uid()`, so a two-segment key is refused by RLS. The same convention
- *     is what `chat-media: delete own or admin` reads to tell your objects from
- *     everyone else's, and what the `cleanup-media` Edge Function walks.
- *   * **JPEG.** The bucket's `allowed_mime_types` is the five image types, and
- *     the retention sweep matches on the row, not the extension; JPEG is picked
- *     because it is the one format every source (HEIC from an iPhone camera,
- *     PNG from a screenshot) can be re-encoded into at a predictable size.
- *   * **10 MB ceiling**, from `storage.buckets.file_size_limit`. A 1080px JPEG
- *     at 0.7 lands two orders of magnitude under it, which is the point of
- *     compressing before the upload rather than reporting a refusal after one.
+ *     `auth.uid()`, so a two-segment key is refused by RLS however tidy it
+ *     looks. The same convention is what `chat-media: delete own or admin`
+ *     reads to tell your objects from everyone else's, what the `cleanup-media`
+ *     Edge Function walks, and what the `messages.media_url` column comment
+ *     already documents. The *last* segment is the id of the message the object
+ *     belongs to (see `newMessageId`), so an object and its row name each other
+ *     in both directions rather than only one.
+ *   * **WebP.** The bucket's `allowed_mime_types` carries `image/webp`, and the
+ *     re-encode is the security barrier as much as the size one: decoding a
+ *     picked file and writing fresh pixels out drops every EXIF block, colour
+ *     profile and trailing byte the original carried, so a payload smuggled
+ *     behind an image header does not survive being turned back into an image.
+ *     WebP over JPEG for the bytes — the same 1080px frame lands roughly a
+ *     third smaller at a visually equivalent quality, and every source the
+ *     picker can hand over (HEIC from an iPhone camera, PNG from a screenshot)
+ *     re-encodes into it on all three targets: `SDImageWebPCoder` on iOS,
+ *     Skia on Android, `canvas.toBlob('image/webp')` on web.
+ *   * **10 MB ceiling**, from `storage.buckets.file_size_limit`. A 1080px WebP
+ *     at 0.75 lands around 150–200 KB — two orders of magnitude under it, which
+ *     is the point of compressing before the upload rather than reporting a
+ *     refusal after one.
  *
  * **Cancelling is not a failure.** `pickAndCompressImage` resolves to `null`
  * data with no error when the user backs out of the picker — the alternative, a
@@ -71,11 +82,31 @@ export type MediaResult<T> = ServiceResult<T, MediaErrorCode>;
 
 export type PickSource = 'library' | 'camera';
 
+/**
+ * What the picker handed back, untouched.
+ *
+ * The original file, at its original size and in whatever format the library
+ * held it — so it is a *preview* source and nothing else. Nothing uploads one:
+ * it has not been through the re-encode that is this service's security
+ * barrier, so treating it as sendable would be the one mistake that matters.
+ * `compressImage` is what turns it into a `PickedImage`.
+ *
+ * It exists as a separate type because the confirmation step needs something to
+ * show before the user has agreed to send anything, and doing the re-encode up
+ * front would spend it on every photo that gets cancelled.
+ */
+export type PickedAsset = {
+  uri: string;
+  /** Zero when the picker does not report it; `compressImage` copes. */
+  width: number;
+  height: number;
+};
+
 /** A picked, resized, re-encoded image — held in memory, never on the row. */
 export type PickedImage = {
   /** Cache-directory file the manipulator wrote; a local preview can use it. */
   uri: string;
-  /** JPEG bytes, base64. What `uploadChatImage` sends. */
+  /** WebP bytes, base64. What `uploadChatImage` sends. */
   base64: string;
   width: number;
   height: number;
@@ -83,16 +114,22 @@ export type PickedImage = {
 
 export const BUCKET = 'chat-media';
 
+/** The one content type this service writes; see the WebP note at the top. */
+const IMAGE_MIME = 'image/webp';
+const IMAGE_EXTENSION = 'webp';
+
 /**
- * Long edge cap and JPEG quality.
+ * Long edge cap and WebP quality.
  *
  * 1080 is a phone screen at 3× on the widest bubble the chat draws, so nothing
  * on screen is ever upscaled, and it is small enough that the base64 round trip
- * below stays a few hundred kilobytes rather than the ten megabytes a modern
- * camera hands over.
+ * below stays a couple of hundred kilobytes rather than the ten megabytes a
+ * modern camera hands over. 0.75 is the quality at which a photographic frame
+ * of that width lands in the 150–200 KB band without visible artefacts on the
+ * gradients — sky, skin — that give a lossy encoder the most trouble.
  */
 const MAX_IMAGE_WIDTH = 1080;
-const JPEG_QUALITY = 0.7;
+const IMAGE_QUALITY = 0.75;
 
 /**
  * How long a signed URL is good for, and how early the cache gives up on one.
@@ -147,19 +184,24 @@ async function ensurePermission(source: PickSource): Promise<MediaServiceError |
 }
 
 /**
- * Opens the picker, then resizes and re-encodes whatever comes back.
+ * Opens the picker and hands back the original file, unmodified.
  *
- * Resizing is conditional: an image already narrower than the cap is passed
- * through the manipulator for the re-encode alone, because widening it to 1080
- * would spend bytes inventing detail that was never in the file.
+ * **Picking and compressing are two calls because a photo is confirmed in
+ * between.** The chat shows what was picked, takes an optional caption and
+ * waits for "Send" — so the re-encode belongs *after* that, not here: doing it
+ * up front would spend a full decode-and-encode on every photo somebody looks
+ * at and thinks better of. Nothing here is uploadable, which is the reason the
+ * return type is `PickedAsset` and not `PickedImage`.
  *
- * `quality: 1` on the picker is deliberate — its own compression would be a
- * *second* lossy pass over an image this then re-encodes at 0.7, and two passes
- * cost quality without saving anything.
+ * `quality: 1` is deliberate — the picker's own compression would be a *second*
+ * lossy pass over an image `compressImage` re-encodes anyway, and two passes
+ * cost quality without saving anything. `exif: false` keeps the metadata out of
+ * memory as well as off the wire; GPS in a holiday photo is the family's
+ * location by another route.
  */
-export async function pickAndCompressImage(
+export async function pickImage(
   source: PickSource = 'library',
-): Promise<MediaResult<PickedImage | null>> {
+): Promise<MediaResult<PickedAsset | null>> {
   if (source === 'camera' && Platform.OS === 'web') {
     return fail('UNSUPPORTED', 'errors.media.cameraUnsupported');
   }
@@ -186,6 +228,32 @@ export async function pickAndCompressImage(
 
     if (!asset?.uri) return fail('PROCESSING_FAILED', 'errors.media.processingFailed');
 
+    return ok<PickedAsset | null, MediaErrorCode>({
+      uri: asset.uri,
+      width: asset.width ?? 0,
+      height: asset.height ?? 0,
+    });
+  });
+}
+
+/**
+ * Resizes and re-encodes a picked file into the bytes that get uploaded.
+ *
+ * **The re-encode is not optional and is not only about size.** The asset is
+ * decoded to pixels and written back out as a fresh WebP, so nothing of the
+ * original container survives the trip: no EXIF, no colour profile, no appended
+ * payload riding behind a valid image header, and no file that was never an
+ * image at all — that one fails to decode and is reported as
+ * `PROCESSING_FAILED` rather than being handed to Storage to think about.
+ *
+ * Resizing is conditional: an image already narrower than the cap is passed
+ * through the manipulator for the re-encode alone, because widening it to 1080
+ * would spend bytes inventing detail that was never in the file. The re-encode
+ * still happens in that case — it is the barrier, so it never gets skipped, and
+ * a `width` the picker did not report (0) resizes rather than assuming small.
+ */
+export async function compressImage(asset: PickedAsset): Promise<MediaResult<PickedImage>> {
+  return guarded(async () => {
     try {
       let context = ImageManipulator.manipulate(asset.uri);
 
@@ -195,14 +263,14 @@ export async function pickAndCompressImage(
 
       const rendered = await context.renderAsync();
       const saved = await rendered.saveAsync({
-        compress: JPEG_QUALITY,
-        format: SaveFormat.JPEG,
+        compress: IMAGE_QUALITY,
+        format: SaveFormat.WEBP,
         base64: true,
       });
 
       if (!saved.base64) return fail('PROCESSING_FAILED', 'errors.media.processingFailed');
 
-      return ok<PickedImage | null, MediaErrorCode>({
+      return ok<PickedImage, MediaErrorCode>({
         uri: saved.uri,
         base64: saved.base64,
         width: saved.width,
@@ -267,19 +335,37 @@ function decodeBase64(input: string): Uint8Array {
 }
 
 /**
- * The object's own name.
+ * The id a photo message will be inserted under, decided **before** either
+ * write happens.
  *
- * Not a real UUID: Hermes has no `crypto.randomUUID` and no `getRandomValues`,
- * and the `uuid` package in `node_modules` is a build-time dependency of an
- * Expo config plugin rather than something the app may import. A timestamp plus
- * 64 bits of `Math.random` is enough here because the key only has to be unique
- * *within one member's folder* — collisions would need the same person, in the
- * same millisecond, drawing the same two randoms.
+ * Naming the object after the row it belongs to is what makes the pair
+ * recoverable from either end: `cleanup-media` walks objects and the retention
+ * sweep walks rows, and with a shared id an orphan on one side names its
+ * counterpart on the other instead of being a filename nothing can be joined
+ * back to. It also lets the upload and the insert be ordered without a round
+ * trip between them — the insert does not have to wait to be told what to call
+ * itself — which is what the chat screen's "upload, then post" sequence needs.
+ *
+ * Shaped as a v4 UUID because `messages.id` is a `uuid` column; a value
+ * Postgres would reject is not an option, so this is a format requirement
+ * rather than a preference. The **randomness** is `Math.random`, which is not:
+ * Hermes has neither `crypto.randomUUID` nor `crypto.getRandomValues`, and the
+ * `uuid` in `node_modules` belongs to an Expo config plugin rather than to the
+ * app, so the alternative is a dependency on a `package.json` that already
+ * carries too many. That is an acceptable trade *here* and would not be
+ * everywhere: this id is not a secret and guessing one grants nothing — RLS
+ * decides who may read a message, never the difficulty of naming it — so what
+ * it has to survive is accidental collision, and 122 bits of it does.
  */
-function objectName(): string {
-  const random = () => Math.floor(Math.random() * 0xffffffff).toString(16).padStart(8, '0');
+export function newMessageId(): string {
+  const hex = (bytes: number) =>
+    Array.from({ length: bytes }, () => Math.floor(Math.random() * 256).toString(16).padStart(2, '0')).join('');
 
-  return `${Date.now().toString(36)}-${random()}${random()}`;
+  // Version 4, variant 1: the two nibbles RFC 4122 pins are written in rather
+  // than drawn, so the value is a well-formed v4 and not merely random hex.
+  const variant = (8 + Math.floor(Math.random() * 4)).toString(16);
+
+  return `${hex(4)}-${hex(2)}-4${hex(2).slice(1)}-${variant}${hex(2).slice(1)}-${hex(6)}`;
 }
 
 /**
@@ -289,11 +375,18 @@ function objectName(): string {
  * today's signing scheme, the same reason `profiles.avatar_config` stores a
  * memoji seed rather than a `tapback.co` link.
  *
+ * `messageId` comes from `newMessageId()` and is the same value the caller then
+ * inserts the row under, which is what ties the object to its message. It is
+ * the caller's to generate rather than this function's to invent, because the
+ * insert needs it too and a value returned from here would arrive too late to
+ * be the row's primary key.
+ *
  * `upsert: false`: a key collision should surface as a failure rather than
  * quietly overwriting a photo somebody else in the family is looking at.
  */
 export async function uploadChatImage(
   familyId: string,
+  messageId: string,
   image: PickedImage,
 ): Promise<MediaResult<string>> {
   return guarded(async () => {
@@ -302,19 +395,53 @@ export async function uploadChatImage(
     if (!auth.user) return fail('NOT_AUTHENTICATED', 'errors.notAuthenticated');
 
     // Three segments, in this order. See the RLS policies quoted at the top.
-    const path = `${familyId}/${auth.user.id}/${objectName()}.jpg`;
+    const path = `${familyId}/${auth.user.id}/${messageId}.${IMAGE_EXTENSION}`;
     const bytes = decodeBase64(image.base64);
 
     const { error } = await supabase.storage
       .from(BUCKET)
       .upload(path, bytes.buffer as ArrayBuffer, {
-        contentType: 'image/jpeg',
+        contentType: IMAGE_MIME,
         upsert: false,
       });
 
     if (error) return { data: null, error: toServiceError(error) };
 
     return ok(path);
+  });
+}
+
+/**
+ * Removes the object behind a deleted photo message.
+ *
+ * **Called after the row is gone, never before, and its failure is not the
+ * caller's problem.** The two orders fail differently and only one of them is
+ * survivable: dropping the object first and then failing to delete the row
+ * leaves a message pointing at nothing, which is a broken photo for the whole
+ * family; dropping the row first and then failing here leaves an object nobody
+ * can reach, which is invisible and which the 10-day `cleanup-media` sweep
+ * collects on its own. That is the same argument the upload makes in reverse,
+ * where the object is written before the row that names it.
+ *
+ * `chat-media: delete own or admin` decides whether this is allowed, and it
+ * reads the *path* — `foldername[2]` against `auth.uid()` — so an admin
+ * moderating somebody else's photo is covered by the policy's second arm and a
+ * member deleting their own by the first. A refusal comes back as an error and
+ * is deliberately not escalated: the message is already gone, which is what the
+ * user asked for.
+ *
+ * `forgetSignedMediaUrl` runs regardless, so a cached URL for an object that no
+ * longer exists cannot be handed to `expo-image` afterwards.
+ */
+export async function deleteChatImage(path: string): Promise<MediaResult<null>> {
+  forgetSignedMediaUrl(path);
+
+  return guarded(async () => {
+    const { error } = await supabase.storage.from(BUCKET).remove([path]);
+
+    if (error) return { data: null, error: toServiceError(error) };
+
+    return ok(null);
   });
 }
 

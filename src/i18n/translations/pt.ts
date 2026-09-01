@@ -255,7 +255,20 @@ export const pt: Translations = {
   'chat.sendA11y': 'Enviar mensagem',
   'chat.photoA11y': 'Foto de {{name}}',
   'chat.photoFailed': 'Não foi possível carregar esta foto',
+  'chat.photoOpenHint': 'Abre a foto em ecrã inteiro',
+  'chat.photoSending': 'A enviar esta foto…',
+  'chat.photoClose': 'Fechar foto',
   'chat.photoUploading': 'A enviar a foto…',
+  'chat.actionsHint': 'Mantém premido para ver as opções da mensagem',
+  'chat.deleteTitle': 'Eliminar esta mensagem?',
+  'chat.deleteMessage': 'Desaparece para toda a tua família, e a foto é eliminada com ela. Isto não pode ser anulado.',
+  'chat.deleteConfirm': 'Eliminar mensagem',
+
+  'photoComposer.previewA11y': 'A foto que escolheste',
+  'photoComposer.captionLabel': 'Legenda',
+  'photoComposer.captionPlaceholder': 'Adiciona uma legenda…',
+  'photoComposer.hint': 'Nada é enviado até tocares em Enviar.',
+  'photoComposer.send': 'Enviar',
 
   'chatActions.title': 'Adicionar à conversa',
   'chatActions.createTask': 'Criar tarefa',
@@ -265,6 +278,13 @@ export const pt: Translations = {
   'chatActions.sendPhotoHint': 'Escolhe uma da tua galeria e publica-a aqui',
   'chatActions.sendPhotoLocked': 'Requer FamApp Gold',
   'chatActions.sendPhotoDisabled': 'Cria ou entra numa família a partir do Perfil primeiro',
+
+  'messageActions.title': 'Mensagem',
+  'messageActions.createTask': 'Criar tarefa a partir da mensagem',
+  'messageActions.createTaskHint': 'Abre o formulário com este texto como título',
+  'messageActions.createTaskNoText': 'Esta mensagem não tem texto para usar como título',
+  'messageActions.delete': 'Eliminar mensagem',
+  'messageActions.deleteHint': 'Desaparece para toda a tua família',
 
   'taskMessage.youAdded': 'Você adicionou uma tarefa',
   'taskMessage.someoneAdded': '{{name}} adicionou uma tarefa',
@@ -488,6 +508,7 @@ export const pt: Translations = {
   'errors.chat.systemEmpty': 'Uma mensagem do sistema precisa de conteúdo.',
   'errors.chat.notMember': 'Você não é membro desta família.',
   'errors.chat.mediaMissing': 'Essa foto não foi guardada. Tenta enviá-la outra vez.',
+  'errors.chat.deleteRefused': 'Não foi possível eliminar essa mensagem.',
 
   'errors.family.forbidden': 'Você não tem permissão para isso.',
   'errors.family.notFound': 'Não foi possível encontrar essa família.',

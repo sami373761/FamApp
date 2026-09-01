@@ -33,7 +33,13 @@ import { supabase } from '@/services/supabase';
 
 type MessageRow = Database['public']['Tables']['messages']['Row'];
 
-export type ChatErrorCode = CommonErrorCode | 'TOO_LONG' | 'EMPTY_MESSAGE' | 'NOT_A_MEMBER';
+export type ChatErrorCode =
+  | CommonErrorCode
+  | 'TOO_LONG'
+  | 'EMPTY_MESSAGE'
+  | 'NOT_A_MEMBER'
+  /** A delete matched no row: not the caller's message, or already gone. */
+  | 'NOT_ALLOWED';
 
 export type ChatServiceError = ServiceError<ChatErrorCode>;
 export type ChatResult<T> = ServiceResult<T, ChatErrorCode>;
@@ -125,27 +131,52 @@ export async function sendMessage(familyId: string, content: string): Promise<Ch
 }
 
 /**
- * Posts a photo: the object path, not a URL and not a caption.
+ * Posts a photo: the object path, and optionally the caption typed under it.
  *
- * `messages_payload_matches_type` allows an `image` row to carry `content` as
- * well, but nothing sends one — the composer has no caption field, and adding
- * an argument for a payload no caller can produce would be inventing a feature
- * in a type signature. A member wanting to say something about a photo sends
- * the photo and then a message, which is what every chat app trains them to do.
+ * `messages_payload_matches_type` always allowed an `image` row to carry
+ * `content` as well; until the confirmation step existed nothing could produce
+ * one, because there was no moment between choosing a photo and sending it in
+ * which to type. Now there is, so the column is finally written — and it is one
+ * row rather than a photo followed by a text message, which is what keeps the
+ * caption attached to its picture instead of merely near it.
+ *
+ * An empty or whitespace-only caption is stored as NULL rather than as `''`:
+ * "no caption" is the absence of one, and a blank string would make
+ * `message.content ? …` render an empty line under the photo.
  *
  * The path has already been through `chatMediaService.uploadChatImage`, so the
  * object exists before the row that names it. That order is the same one
  * `createTask` uses for its announcement, and for the same reason: a row
  * pointing at nothing is worse than an object nothing points at, which the
  * 10-day media sweep collects anyway.
+ *
+ * `messageId` is supplied rather than left to `gen_random_uuid()` because the
+ * object was already named after it — `chatMediaService.newMessageId()` decides
+ * it once and both writes use it, which is what lets an object and its row be
+ * joined from either side. Writing the primary key from the client is safe here
+ * in the way it would not be for a column anyone trusts: `messages: send as
+ * self` still pins `sender_id` to `auth.uid()` and `family_id` to the caller's
+ * own family, so a chosen id buys nothing, and a chosen id that collides is a
+ * duplicate-key error rather than a write onto somebody else's row.
  */
 export async function sendImageMessage(
   familyId: string,
+  messageId: string,
   mediaPath: string,
+  caption?: string | null,
 ): Promise<ChatResult<ChatMessage>> {
   const path = mediaPath.trim();
 
   if (!path) return fail('EMPTY_MESSAGE', 'errors.chat.mediaMissing');
+
+  const content = caption?.trim() || null;
+
+  // The same ceiling a text message answers to, checked here for the same
+  // reason: `messages_content_length` would refuse the row, and refusing after
+  // the object is already in the bucket costs an upload to say so.
+  if (content && content.length > MAX_MESSAGE_LENGTH) {
+    return fail('TOO_LONG', { key: 'errors.chat.tooLong', vars: { max: MAX_MESSAGE_LENGTH } });
+  }
 
   return guarded(async () => {
     const { data: auth } = await supabase.auth.getUser();
@@ -155,10 +186,12 @@ export async function sendImageMessage(
     const { data, error } = await supabase
       .from('messages')
       .insert({
+        id: messageId,
         family_id: familyId,
         sender_id: auth.user.id,
         message_type: 'image',
         media_url: path,
+        content,
       })
       .select()
       .single();
@@ -166,6 +199,42 @@ export async function sendImageMessage(
     if (error) return { data: null, error: toServiceError(error) };
 
     return ok(toChatMessage(data));
+  });
+}
+
+/**
+ * Deletes one message, and reports a refusal that Postgres does not.
+ *
+ * **A DELETE blocked by RLS is not an error — it deletes nothing and succeeds.**
+ * `messages: delete own or admin` is a `using` clause, so a row the caller may
+ * not touch simply fails to match, and PostgREST returns 204 with no complaint.
+ * Trusting that would report somebody else's message as deleted and then have
+ * it reappear on the next refresh, so the delete asks for the row back with
+ * `.select()` and an empty array is read as the refusal it is.
+ *
+ * That one branch cannot distinguish "not yours" from "already gone" — both
+ * match nothing — and it does not need to: `NOT_ALLOWED` carries a message
+ * saying the message could not be deleted, and a row that has already been
+ * swept or removed on another device is in exactly the state the caller wanted.
+ *
+ * The **object** behind an image message is not this function's business.
+ * `chatMediaService.deleteChatImage` is called after this returns, by
+ * `FamilyContext`, in that order and never the reverse — see the note there.
+ */
+export async function deleteMessage(messageId: string): Promise<ChatResult<string>> {
+  return guarded(async () => {
+    const { data, error } = await supabase
+      .from('messages')
+      .delete()
+      .eq('id', messageId)
+      .select('id');
+
+    if (error) return { data: null, error: toServiceError(error) };
+    if (!data || data.length === 0) {
+      return fail('NOT_ALLOWED', 'errors.chat.deleteRefused');
+    }
+
+    return ok(messageId);
   });
 }
 

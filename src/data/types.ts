@@ -69,6 +69,26 @@ export type Family = {
 
 export type MessageType = 'text' | 'image' | 'system';
 
+/**
+ * A photo that exists on this device and nowhere else yet.
+ *
+ * The one thing in the app that is rendered before a row backs it, and the
+ * exception is narrow on purpose: it is not invented family data, it is *this*
+ * user's own action a second before the network agrees. It lasts as long as one
+ * upload — `FamilyContext` puts it in the list when the picker returns and
+ * takes it out again when the insert lands or fails — and it never survives a
+ * reload, because nothing writes it down. A pending message the app forgot is
+ * the honest outcome of a send that never finished.
+ *
+ * Only ever set by `beginImage`. Anything that came from a row — fetched,
+ * inserted or off the socket — has this undefined, which is what lets
+ * `withMessage` tell a placeholder from the real thing at the same id.
+ */
+export type PendingUpload = {
+  /** The compressed local file, so the bubble can show the actual photo. */
+  localUri: string;
+};
+
 export type ChatMessage = {
   id: string;
   senderId: string;
@@ -78,6 +98,8 @@ export type ChatMessage = {
   /** Storage object path in the private `chat-media` bucket, not a URL. */
   mediaUrl: string | null;
   createdAt: string;
+  /** Set only while this device is still uploading the photo. See above. */
+  pending?: PendingUpload;
 };
 
 /**

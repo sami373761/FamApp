@@ -274,7 +274,20 @@ export const en = {
   'chat.sendA11y': 'Send message',
   'chat.photoA11y': 'Photo from {{name}}',
   'chat.photoFailed': 'This photo could not be loaded',
+  'chat.photoOpenHint': 'Opens the photo full screen',
+  'chat.photoSending': 'Sending this photo…',
+  'chat.photoClose': 'Close photo',
   'chat.photoUploading': 'Sending photo…',
+  'chat.actionsHint': 'Long press for message options',
+  'chat.deleteTitle': 'Delete this message?',
+  'chat.deleteMessage': 'It disappears for everyone in your family, and a photo is deleted with it. This cannot be undone.',
+  'chat.deleteConfirm': 'Delete message',
+
+  'photoComposer.previewA11y': 'The photo you picked',
+  'photoComposer.captionLabel': 'Caption',
+  'photoComposer.captionPlaceholder': 'Add a caption…',
+  'photoComposer.hint': 'Nothing is sent until you tap Send.',
+  'photoComposer.send': 'Send',
 
   'chatActions.title': 'Add to the chat',
   'chatActions.createTask': 'Create task',
@@ -284,6 +297,13 @@ export const en = {
   'chatActions.sendPhotoHint': 'Pick one from your library and post it here',
   'chatActions.sendPhotoLocked': 'FamApp Gold required',
   'chatActions.sendPhotoDisabled': 'Create or join a family from Profile first',
+
+  'messageActions.title': 'Message',
+  'messageActions.createTask': 'Create task from message',
+  'messageActions.createTaskHint': 'Opens the task form with this text as the title',
+  'messageActions.createTaskNoText': 'This message has no text to use as a title',
+  'messageActions.delete': 'Delete message',
+  'messageActions.deleteHint': 'Remove it for everyone in your family',
 
   'taskMessage.youAdded': 'You added a task',
   'taskMessage.someoneAdded': '{{name}} added a task',
@@ -522,6 +542,7 @@ export const en = {
   'errors.chat.systemEmpty': 'A system message needs content.',
   'errors.chat.notMember': 'You are not a member of this family.',
   'errors.chat.mediaMissing': 'That photo was not stored. Try sending it again.',
+  'errors.chat.deleteRefused': 'That message could not be deleted.',
 
   'errors.family.forbidden': 'You do not have permission to do that.',
   'errors.family.notFound': 'That family could not be found.',

@@ -314,7 +314,20 @@ export const ar: Translations = {
   'chat.sendA11y': 'إرسال الرسالة',
   'chat.photoA11y': 'صورة من {{name}}',
   'chat.photoFailed': 'تعذّر تحميل هذه الصورة',
+  'chat.photoOpenHint': 'يفتح الصورة بملء الشاشة',
+  'chat.photoSending': 'جارٍ إرسال هذه الصورة…',
+  'chat.photoClose': 'إغلاق الصورة',
   'chat.photoUploading': 'جارٍ إرسال الصورة…',
+  'chat.actionsHint': 'اضغط مطوّلاً لعرض خيارات الرسالة',
+  'chat.deleteTitle': 'هل تريد حذف هذه الرسالة؟',
+  'chat.deleteMessage': 'ستختفي لدى جميع أفراد عائلتك، وستُحذف الصورة معها. لا يمكن التراجع عن ذلك.',
+  'chat.deleteConfirm': 'حذف الرسالة',
+
+  'photoComposer.previewA11y': 'الصورة التي اخترتها',
+  'photoComposer.captionLabel': 'تعليق',
+  'photoComposer.captionPlaceholder': 'أضف تعليقًا…',
+  'photoComposer.hint': 'لن يُرسَل شيء حتى تضغط على إرسال.',
+  'photoComposer.send': 'إرسال',
 
   'chatActions.title': 'إضافة إلى المحادثة',
   'chatActions.createTask': 'إنشاء مهمة',
@@ -324,6 +337,13 @@ export const ar: Translations = {
   'chatActions.sendPhotoHint': 'اختر صورة من معرضك وانشرها هنا',
   'chatActions.sendPhotoLocked': 'يتطلب FamApp Gold',
   'chatActions.sendPhotoDisabled': 'أنشئ عائلة أو انضم إلى واحدة من الملف الشخصي أولاً',
+
+  'messageActions.title': 'الرسالة',
+  'messageActions.createTask': 'إنشاء مهمة من الرسالة',
+  'messageActions.createTaskHint': 'يفتح النموذج وهذا النص هو العنوان',
+  'messageActions.createTaskNoText': 'لا يوجد في هذه الرسالة نص يصلح عنوانًا',
+  'messageActions.delete': 'حذف الرسالة',
+  'messageActions.deleteHint': 'تختفي لدى جميع أفراد عائلتك',
 
   'taskMessage.youAdded': 'أضفت مهمة',
   'taskMessage.someoneAdded': 'أضاف {{name}} مهمة',
@@ -550,6 +570,7 @@ export const ar: Translations = {
   'errors.chat.systemEmpty': 'رسالة النظام تحتاج إلى محتوى.',
   'errors.chat.notMember': 'أنت لست عضوًا في هذه العائلة.',
   'errors.chat.mediaMissing': 'لم يتم حفظ تلك الصورة. حاول إرسالها مرة أخرى.',
+  'errors.chat.deleteRefused': 'تعذّر حذف هذه الرسالة.',
 
   'errors.family.forbidden': 'ليس لديك إذن للقيام بذلك.',
   'errors.family.notFound': 'تعذّر العثور على هذه العائلة.',

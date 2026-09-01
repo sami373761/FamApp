@@ -47,6 +47,15 @@ type Row<T extends keyof Database['public']['Tables']> = Database['public']['Tab
 export type FamilyRealtimeHandlers = {
   /** A message anyone in the family posted, including this device's own. */
   onMessage: (message: ChatMessage) => void;
+  /**
+   * A message anyone in the family deleted, including this device's own.
+   *
+   * Deliverable only because `messages` carries `replica identity full`: the
+   * `family_id` filter is matched against `old`, and a table without it sends
+   * the primary key alone, so the event would never arrive. That is the whole
+   * reason `locations` and `profiles` have no delete listener.
+   */
+  onMessageRemoved: (messageId: string) => void;
   /** Insert *and* update: both arrive as the whole row, so both mean "this is the task now". */
   onTask: (task: FamilyTask) => void;
   onTaskRemoved: (taskId: string) => void;
@@ -99,7 +108,7 @@ export function toIsoTimestamp(value: string): string {
 /**
  * Opens the family's channel and returns the function that closes it.
  *
- * One channel with seven bindings rather than one channel per table: the socket
+ * One channel with eight bindings rather than one channel per table: the socket
  * multiplexes them anyway, and a single topic means a single join, a single
  * rejoin, and one place to notice that the connection came back.
  */
@@ -117,6 +126,15 @@ export function subscribeToFamily(familyId: string, handlers: FamilyRealtimeHand
       { event: 'INSERT', schema: 'public', table: 'messages', filter },
       ({ new: row }) => {
         handlers.onMessage(toChatMessage({ ...row, created_at: toIsoTimestamp(row.created_at) }));
+      },
+    )
+    .on<Row<'messages'>>(
+      'postgres_changes',
+      { event: 'DELETE', schema: 'public', table: 'messages', filter },
+      ({ old: row }) => {
+        // `old` is typed Partial because a table without REPLICA IDENTITY FULL
+        // sends only its key. `messages` has it, so the id is really there.
+        if (row.id) handlers.onMessageRemoved(row.id);
       },
     )
     .on<Row<'tasks'>>(

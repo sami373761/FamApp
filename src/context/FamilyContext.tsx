@@ -29,6 +29,7 @@ import type {
 } from '@/data/types';
 import { useAuth } from '@/hooks/useAuth';
 import { useTranslation } from '@/hooks/use-translation';
+import * as chatMediaService from '@/services/chatMediaService';
 import * as chatService from '@/services/chatService';
 import {
   getFamilyOverview,
@@ -110,15 +111,69 @@ export type FamilyContextValue = {
   /** Every write below resolves to an error message to display, or null. */
   sendMessage: (text: string) => Promise<string | null>;
   /**
-   * Posts an already-uploaded photo, by its object path.
+   * Puts the photo in the chat *before* it has been uploaded, as the sender's
+   * own bubble under a progress veil.
+   *
+   * The three photo calls are one flow and are split because the slow middle
+   * belongs to the screen: `beginImage` when the picker returns, then the
+   * upload, then `sendImage` on success or `discardImage` on failure. Nothing
+   * else in the app renders ahead of a row — see `PendingUpload` for why this
+   * one is allowed to and why the exception does not widen.
+   *
+   * Synchronous and returns nothing, because there is nothing to fail: it is a
+   * local commit of a photo the device already holds. A caller with no family
+   * or no profile is a no-op rather than an error, since the send that would
+   * follow could not have happened either.
+   */
+  beginImage: (messageId: string, localUri: string, caption?: string | null) => void;
+  /**
+   * Takes that placeholder back out — the upload failed, or the user cancelled
+   * out of the picker after one had already been put up.
+   *
+   * `sendImage` calls this itself when the *insert* fails, so a caller only
+   * needs it for the half it owns.
+   */
+  discardImage: (messageId: string) => void;
+  /**
+   * Posts an already-uploaded photo, by the id it was uploaded under and the
+   * object path that came back.
    *
    * Takes the path rather than the picked image because the *upload* is the
    * slow half and belongs to the screen, which is what shows a progress row
    * while it runs. This is only the row and the local append — the same split
    * `setOwnLocation` makes, and for the same reason: a message naming an object
    * that was never stored would render as a broken photo for everyone.
+   *
+   * `messageId` is the one `chatMediaService.newMessageId()` produced before the
+   * upload, so the object is already named after the row this is about to
+   * insert. Reconciliation needs nothing extra for it: the local append and the
+   * socket's echo of the same insert are matched on that id by `withMessage`,
+   * which is the same key it would have had from `gen_random_uuid()` — and it
+   * is what lets the confirmed row *replace* `beginImage`'s placeholder rather
+   * than appear beneath it as a second copy of the same photo.
+   *
+   * `caption` is the optional text typed under the photo in the confirmation
+   * step, stored as the same row's `content` rather than as a message of its
+   * own — one row is what keeps a caption attached to its picture.
    */
-  sendImage: (mediaPath: string) => Promise<string | null>;
+  sendImage: (
+    messageId: string,
+    mediaPath: string,
+    caption?: string | null,
+  ) => Promise<string | null>;
+  /**
+   * Deletes a message, and the stored object behind it when it is a photo.
+   *
+   * **Optimistic**: the row leaves the local list first and is put back, in its
+   * own place, if the server refuses. That refusal is a real possibility rather
+   * than a formality — `messages: delete own or admin` is enforced, unlike the
+   * client-side courtesies around tasks and the Gold gate — so this is one of
+   * the few writes whose failure path a user can actually reach by trying.
+   *
+   * A pending placeholder is dropped locally without asking the server, since
+   * there is no row to delete yet.
+   */
+  deleteMessage: (messageId: string) => Promise<string | null>;
   setTaskStatus: (taskId: string, status: TaskStatus) => Promise<string | null>;
   /**
    * Creates the task **and** announces it in the chat, which is what puts a
@@ -209,7 +264,22 @@ const byStanding = (a: FamilyMember, b: FamilyMember) =>
   Number(b.isAdmin) - Number(a.isAdmin) || a.createdAt.localeCompare(b.createdAt);
 
 function withMessage(state: LoadedFamily, message: ChatMessage): LoadedFamily {
-  if (state.messages.some((candidate) => candidate.id === message.id)) return state;
+  const existing = state.messages.findIndex((candidate) => candidate.id === message.id);
+
+  if (existing !== -1) {
+    // Already here as a real row: the local append and the socket's echo of the
+    // same insert both arrive, in either order, and only one of them may land.
+    if (!state.messages[existing].pending) return state;
+
+    // Here as this device's own placeholder, now confirmed. It is *removed and
+    // re-inserted* rather than overwritten in place, because the server stamped
+    // `created_at` itself and it will not be the local clock's guess — leaving
+    // it at the placeholder's index would file it out of order against anything
+    // that arrived while the upload was running.
+    const without = state.messages.filter((candidate) => candidate.id !== message.id);
+
+    return withMessage({ ...state, messages: without }, message);
+  }
 
   const messages = [...state.messages];
 
@@ -222,6 +292,21 @@ function withMessage(state: LoadedFamily, message: ChatMessage): LoadedFamily {
   messages.splice(at, 0, message);
 
   return { ...state, messages };
+}
+
+/**
+ * Drops a message by id.
+ *
+ * Three callers, all of them removals of something that is no longer there or
+ * never got there: a pending placeholder whose upload failed, a message this
+ * device just deleted, and the socket's `DELETE` event for one somebody else
+ * deleted. The last of those works only because `messages` carries `replica
+ * identity full` — see `realtimeService`.
+ */
+function withoutMessage(state: LoadedFamily, messageId: string): LoadedFamily {
+  const messages = state.messages.filter((candidate) => candidate.id !== messageId);
+
+  return messages.length === state.messages.length ? state : { ...state, messages };
 }
 
 /** Insert and update in one: both carry the whole row, so both mean "this is the task now". */
@@ -457,6 +542,7 @@ export function FamilyProvider({ children }: { children: ReactNode }) {
 
     return subscribeToFamily(familyId, {
       onMessage: (message) => commit((previous) => withMessage(previous, message)),
+      onMessageRemoved: (messageId) => commit((previous) => withoutMessage(previous, messageId)),
       onTask: (task) => commit((previous) => withTask(previous, task)),
       onTaskRemoved: (taskId) => commit((previous) => withoutTask(previous, taskId)),
       onLocation: (memberId, location) =>
@@ -487,19 +573,115 @@ export function FamilyProvider({ children }: { children: ReactNode }) {
     [commit, familyId, i18n],
   );
 
+  const beginImage = useCallback(
+    (messageId: string, localUri: string, caption?: string | null): void => {
+      if (!familyId || !profile?.id) return;
+
+      // The local clock, which is the one thing here the server will disagree
+      // with — `created_at` is stamped `now()` on insert. It only has to be
+      // close enough to file the bubble at the bottom where the sender is
+      // looking; `withMessage` re-files it for real once the row comes back.
+      commit((previous) =>
+        withMessage(previous, {
+          id: messageId,
+          senderId: profile.id,
+          type: 'image',
+          // Trimmed to null the same way `sendImageMessage` will trim it, so
+          // the placeholder and the row it becomes say the same thing.
+          content: caption?.trim() || null,
+          // No object path yet — that is the whole point of `pending`, and it
+          // is why `ChatImage` reads `localUri` instead of trying to sign this.
+          mediaUrl: null,
+          createdAt: new Date().toISOString(),
+          pending: { localUri },
+        }),
+      );
+    },
+    [commit, familyId, profile?.id],
+  );
+
+  const discardImage = useCallback(
+    (messageId: string): void => {
+      commit((previous) => withoutMessage(previous, messageId));
+    },
+    [commit],
+  );
+
   const sendImage = useCallback(
-    async (mediaPath: string): Promise<string | null> => {
+    async (
+      messageId: string,
+      mediaPath: string,
+      caption?: string | null,
+    ): Promise<string | null> => {
       if (!familyId) return i18n.t('errors.family.none');
 
-      const { data, error } = await chatService.sendImageMessage(familyId, mediaPath);
+      const { data, error } = await chatService.sendImageMessage(
+        familyId,
+        messageId,
+        mediaPath,
+        caption,
+      );
 
-      if (error) return errorText(i18n, error);
+      // The caller reports the failure; the placeholder goes either way, since
+      // a bubble that stays behind an error message reads as a photo that is
+      // still on its way.
+      if (error) {
+        commit((previous) => withoutMessage(previous, messageId));
 
+        return errorText(i18n, error);
+      }
+
+      // Same reducer the channel uses — this replaces the placeholder above,
+      // or does nothing if the socket already delivered the confirmed row.
       commit((previous) => withMessage(previous, data));
 
       return null;
     },
     [commit, familyId, i18n],
+  );
+
+  const deleteMessage = useCallback(
+    async (messageId: string): Promise<string | null> => {
+      // Held before the optimistic removal, because it is the only copy of the
+      // row left afterwards — both to put back if the delete is refused, and to
+      // read `mediaUrl` off once it succeeds.
+      const removed = current?.messages.find((message) => message.id === messageId);
+
+      if (!removed) return null;
+
+      // A placeholder was never inserted, so there is nothing to ask the server
+      // about — dropping it locally *is* the delete. The upload still running
+      // behind it will find its own row gone and report that, which is the
+      // truthful outcome of cancelling something mid-flight.
+      if (removed.pending) {
+        commit((previous) => withoutMessage(previous, messageId));
+
+        return null;
+      }
+
+      commit((previous) => withoutMessage(previous, messageId));
+
+      const { error } = await chatService.deleteMessage(messageId);
+
+      if (error) {
+        // Put it back exactly where it was: `withMessage` re-files it by
+        // `createdAt`, so it returns to its own place rather than the bottom.
+        commit((previous) => withMessage(previous, removed));
+
+        return errorText(i18n, error);
+      }
+
+      // Row first, object second, and the object's failure is not reported —
+      // see `deleteChatImage`. An orphaned object is invisible and the 10-day
+      // sweep collects it; a message pointing at a deleted object would be a
+      // broken photo for the whole family.
+      if (removed.type === 'image' && removed.mediaUrl) {
+        void chatMediaService.deleteChatImage(removed.mediaUrl);
+      }
+
+      return null;
+    },
+    [commit, current?.messages, i18n],
   );
 
   const setTaskStatus = useCallback(
@@ -728,7 +910,10 @@ export function FamilyProvider({ children }: { children: ReactNode }) {
       error: current?.error ?? null,
       refresh,
       sendMessage,
+      beginImage,
+      discardImage,
       sendImage,
+      deleteMessage,
       setTaskStatus,
       createTask,
       removeMember,
@@ -739,9 +924,12 @@ export function FamilyProvider({ children }: { children: ReactNode }) {
       setOwnLocation,
     };
   }, [
+    beginImage,
     createTask,
     current,
+    deleteMessage,
     deletePlace,
+    discardImage,
     editPlace,
     familyId,
     isRefreshing,

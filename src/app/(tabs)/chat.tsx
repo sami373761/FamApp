@@ -14,6 +14,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ChatActionsList } from '@/components/chat/chat-actions-sheet';
+import { MessageActionsList } from '@/components/chat/message-actions-sheet';
 import { PhotoComposer } from '@/components/chat/photo-composer';
 import { ChatComposer } from '@/components/chat/chat-composer';
 import { MessageBubble } from '@/components/chat/message-bubble';
@@ -21,7 +22,7 @@ import { TaskMessageCard } from '@/components/chat/task-message-card';
 import { TaskComposerForm } from '@/components/tasks/task-composer';
 import { Avatar, ConfirmDialog, EmptyState, Sheet, Text } from '@/components/ui';
 import { dayLabel } from '@/data/format';
-import type { TaskStatus } from '@/data/types';
+import type { ChatMessage, TaskStatus } from '@/data/types';
 import { errorText } from '@/services/result';
 import {
   compressImage,
@@ -31,6 +32,7 @@ import {
   type PickedAsset,
 } from '@/services/chatMediaService';
 import { groupByDay } from '@/services/chatService';
+import { MAX_TASK_TITLE_LENGTH } from '@/services/taskService';
 import { useAuth } from '@/hooks/useAuth';
 import { useFamily } from '@/hooks/useFamily';
 import { useIsMounted } from '@/hooks/use-safe-back';
@@ -94,6 +96,40 @@ const modalDismissed = () =>
  * argued itself out of adding for less.
  */
 const KEYBOARD_DISMISS_DRAG_PX = 40;
+
+/**
+ * How much of a message the long-press menu repeats back in its own header.
+ *
+ * The sheet covers the list it was opened from, so without it the menu is two
+ * actions and no answer to "which message?". A message may be
+ * `MAX_MESSAGE_LENGTH` (500) long and the header has no line cap of its own, so
+ * a whole one would push the actions off a small screen.
+ */
+const ACTION_EXCERPT_LENGTH = 120;
+
+/** Cuts to fit, marking the cut. The ellipsis counts toward `max`. */
+function truncate(text: string, max: number): string {
+  return text.length <= max ? text : `${text.slice(0, max - 1).trimEnd()}…`;
+}
+
+/**
+ * The title a task made from this message would start with — empty when the
+ * message has nothing to offer one.
+ *
+ * A `system` row is the app's own announcement of a task that already exists,
+ * so converting one would mint a task titled with copy nobody wrote; it is
+ * excluded rather than trimmed. A photo's caption is the sender's own words and
+ * counts, which is also why this reads `content` rather than testing for text.
+ *
+ * The cap is `tasks_title_length`'s. `maxLength` on the title field only bounds
+ * what is *typed* into it, so an over-long seed would otherwise sit there with
+ * "Create task" greyed out and nothing on screen saying why.
+ */
+function taskTitleFrom(message: ChatMessage): string {
+  if (message.type === 'system') return '';
+
+  return truncate(message.content?.trim() ?? '', MAX_TASK_TITLE_LENGTH);
+}
 
 /**
  * Family chat, and the app's primary way of creating a task.
@@ -162,12 +198,24 @@ export default function ChatScreen() {
   // refusing after it has been filled in.
   const hasFamily = !!profile?.family_id;
 
-  // One sheet, four states — not four sheets. Dismissing a native modal while
-  // presenting another in the same frame is unreliable on iOS, so "Create task"
-  // and the photo confirmation each change what the open sheet holds rather
-  // than handing off to a second one.
-  const [sheet, setSheet] = useState<'none' | 'actions' | 'task' | 'photo'>('none');
+  // One sheet, five states — not five sheets. Dismissing a native modal while
+  // presenting another in the same frame is unreliable on iOS, so the message
+  // menu, "Create task" and the photo confirmation each change what the open
+  // sheet holds rather than handing off to a second one.
+  const [sheet, setSheet] = useState<'none' | 'actions' | 'message' | 'task' | 'photo'>('none');
   const [busyTaskId, setBusyTaskId] = useState<string | null>(null);
+
+  /**
+   * The message a long press is asking about, and the seed the task form opens
+   * with.
+   *
+   * The seed is separate from the message on purpose: the form reads it once,
+   * at mount, and the menu is gone by then. Both openers set it — the "+" menu
+   * to nothing, the message menu to that message's text — so a title can never
+   * arrive from whichever flow ran last.
+   */
+  const [actionMessage, setActionMessage] = useState<ChatMessage | null>(null);
+  const [taskTitleSeed, setTaskTitleSeed] = useState('');
 
   // The photo flow outlives the sheet that starts it — the picker closes it —
   // so its progress and its failure belong to the screen, in the strip above
@@ -193,6 +241,26 @@ export default function ChatScreen() {
   // The sheet's row stays busy for the whole flow — re-opening it mid-upload
   // and finding "Send photo" ready to press again would invite a second one.
   const isSendingPhoto = photoStage !== 'idle';
+
+  /**
+   * Closing forgets the message the menu was about, so the next long press
+   * cannot inherit it. The seed is left alone — every opener sets it.
+   */
+  const closeSheet = useCallback(() => {
+    setSheet('none');
+    setActionMessage(null);
+  }, []);
+
+  /**
+   * Mirrors `messages: delete own or admin`, which is the policy that actually
+   * decides. Unlike `canActOnTask` this is not a courtesy over a permissive
+   * policy — a non-owner who got past it would have the delete refused by RLS
+   * and the bubble put back.
+   */
+  const canDeleteMessage = useCallback(
+    (message: ChatMessage) => message.senderId === user?.id || !!currentMember?.isAdmin,
+    [currentMember?.isAdmin, user?.id],
+  );
 
   const days = useMemo(() => groupByDay(messages), [messages]);
   const onlineCount = members.filter((member) => member.presence === 'online').length;
@@ -388,6 +456,51 @@ export default function ChatScreen() {
   );
 
   /**
+   * "Create task from message": the same form the "+" menu opens, with this
+   * message's text already in the title field.
+   *
+   * A prefill and nothing else — the task is created, announced and linked by
+   * `createTask` exactly as any other, so `source_message_id` still names the
+   * announcement it writes rather than the message being converted. Pointing it
+   * at the original would redraw somebody's own line as a task card, hiding
+   * what they wrote and crediting the task to whoever happened to send it.
+   *
+   * No `modalDismissed` gap: this is the one sheet swapping its children, which
+   * is the whole reason the screen has only one.
+   */
+  const startTaskFromMessage = useCallback(() => {
+    if (!actionMessage) return;
+
+    setTaskTitleSeed(taskTitleFrom(actionMessage));
+    setActionMessage(null);
+    setSheet('task');
+  }, [actionMessage]);
+
+  /**
+   * "Delete message": hands off from the sheet to `ConfirmDialog`.
+   *
+   * Two modals, so it pays `MODAL_DISMISS_MS` the same way the picker does —
+   * presenting the dialog while the sheet is still sliding away is the hazard
+   * that keeps this screen down to one `Sheet`. The dialog is worth the gap:
+   * the write stays inside it, so a refusal is reported in place instead of
+   * dismissing and leaving the failure somewhere else.
+   */
+  const requestDelete = useCallback(async () => {
+    const message = actionMessage;
+
+    closeSheet();
+
+    if (!message) return;
+
+    await modalDismissed();
+
+    if (!isMounted()) return;
+
+    setDeleteError(null);
+    setPendingDelete(message.id);
+  }, [actionMessage, closeSheet, isMounted]);
+
+  /**
    * Long-pressing a bubble asks to delete it; this is the answer.
    *
    * The write stays *inside* `ConfirmDialog` — the dialog holds its own
@@ -519,15 +632,15 @@ export default function ChatScreen() {
                       message={message}
                       sender={getMember(message.senderId)}
                       isOwn={isOwn}
-                      // Mirrors `messages: delete own or admin`, which is the
-                      // policy that actually decides. Unlike `canActOnTask`
-                      // this is not a courtesy over a permissive policy — a
-                      // non-owner who got past it would have the delete refused
-                      // by RLS and the bubble put back.
-                      canDelete={isOwn || !!currentMember?.isAdmin}
-                      onRequestDelete={() => {
-                        setDeleteError(null);
-                        setPendingDelete(message.id);
+                      // Whether the menu would have anything live in it: this
+                      // message is one the caller may delete, or it carries
+                      // text a task could be titled with. A photo with no
+                      // caption from somebody else is neither, so it keeps the
+                      // inert bubble it always had.
+                      canAct={canDeleteMessage(message) || taskTitleFrom(message).length > 0}
+                      onRequestActions={() => {
+                        setActionMessage(message);
+                        setSheet('message');
                       }}
                       // Only label the first message in a run from the same
                       // person — but a task card breaks the run, so the bubble
@@ -571,15 +684,35 @@ export default function ChatScreen() {
 
       <Sheet
         visible={sheet !== 'none'}
-        title={sheet === 'task' ? t('composer.title') : t('chatActions.title')}
-        description={sheet === 'task' ? t('composer.description') : undefined}
-        onClose={() => setSheet('none')}>
+        title={
+          sheet === 'task'
+            ? t('composer.title')
+            : sheet === 'message'
+              ? t('messageActions.title')
+              : t('chatActions.title')
+        }
+        description={
+          sheet === 'task'
+            ? t('composer.description')
+            : // Which message this is about. The sheet covers the list it was
+              // opened from, so the menu would otherwise be two actions and no
+              // subject; a photo with no caption has nothing to quote.
+              sheet === 'message' && actionMessage?.content
+              ? truncate(actionMessage.content.trim(), ACTION_EXCERPT_LENGTH)
+              : undefined
+        }
+        onClose={closeSheet}>
         {sheet === 'actions' ? (
           <ChatActionsList
             canCreateTask={hasFamily}
             isPremium={isPremium}
             isSendingPhoto={isSendingPhoto}
-            onCreateTask={() => setSheet('task')}
+            onCreateTask={() => {
+              // Blank, because this opener is not converting anything — the
+              // seed is set at both openers so neither can inherit the other's.
+              setTaskTitleSeed('');
+              setSheet('task');
+            }}
             onSendPhoto={() => void pickPhoto()}
             /*
               Closed before the push, for the reason the Map's place sheet
@@ -593,14 +726,29 @@ export default function ChatScreen() {
           />
         ) : null}
 
+        {/* The long-press menu. `hasTitle` and the delete row are the same two
+            tests the bubble used to decide the gesture was worth offering. */}
+        {sheet === 'message' && actionMessage ? (
+          <MessageActionsList
+            hasFamily={hasFamily}
+            hasTitle={taskTitleFrom(actionMessage).length > 0}
+            canDelete={canDeleteMessage(actionMessage)}
+            onCreateTask={startTaskFromMessage}
+            onDelete={() => void requestDelete()}
+          />
+        ) : null}
+
         {/* Unmounted on close, which is what clears the draft — the form keeps
             its fields in local state and has no reset of its own. */}
         {sheet === 'task' ? (
           <TaskComposerForm
             members={members}
+            // Empty from the "+" menu, the message's own text when this form
+            // was reached by converting one. Read once, at mount.
+            initialTitle={taskTitleSeed}
             currentUserId={user?.id}
             onCreate={createTask}
-            onClose={() => setSheet('none')}
+            onClose={closeSheet}
           />
         ) : null}
 
@@ -611,7 +759,7 @@ export default function ChatScreen() {
           <PhotoComposer
             asset={pendingAsset}
             onCancel={() => {
-              setSheet('none');
+              closeSheet();
               setPendingAsset(null);
             }}
             onSend={(caption) => void confirmPhoto(caption)}
@@ -622,8 +770,9 @@ export default function ChatScreen() {
       {/*
         The screen owns one dialog rather than each bubble owning its own: a
         `Modal` per message would mount two hundred of them to ask one question.
-        It can never be open at the same time as the `Sheet` above — a long
-        press happens on the message list, which the sheet covers.
+        It is never open at the same time as the `Sheet` above: the long press
+        opens the menu, and `requestDelete` closes that and waits it out before
+        this is asked for.
       */}
       <ConfirmDialog
         visible={pendingDelete !== null}

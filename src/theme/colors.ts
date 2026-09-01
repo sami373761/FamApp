@@ -83,6 +83,13 @@ export const Palette = {
 
     // Misc
     overlay: 'rgba(29, 31, 31, 0.45)',
+    // The ground a full-screen photo is viewed against. Near-opaque where
+    // `overlay` is a scrim you are meant to see the app through, and the one
+    // token deliberately identical in both schemes: a photo viewer is a dark
+    // room in either, and a light-mode surround would tint what the eye reads
+    // as the photo's own shadows.
+    viewerCanvas: 'rgba(8, 9, 9, 0.97)',
+    viewerOnCanvas: '#F4F5F5',
     mapCanvas: '#EBEDEC',
   },
 
@@ -131,6 +138,9 @@ export const Palette = {
 
     // Misc
     overlay: 'rgba(0, 0, 0, 0.6)',
+    // Same two values as light on purpose — see the note there.
+    viewerCanvas: 'rgba(8, 9, 9, 0.97)',
+    viewerOnCanvas: '#F4F5F5',
     mapCanvas: '#141716',
   },
 } as const;

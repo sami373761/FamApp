@@ -95,8 +95,19 @@ export default function HomeScreen() {
     [openTasks],
   );
 
-  /** Oldest-last, so the newest message is the last element. */
-  const latestMessage = messages.length > 0 ? messages[messages.length - 1] : null;
+  /**
+   * Oldest-last, so the newest message is the last element — but the newest
+   * *sent* one, which is not the same thing while a photo is uploading. A
+   * pending bubble belongs to the sender's own chat stream, not to a tile that
+   * tells the family what the last thing said was. See `PendingUpload`.
+   */
+  const latestMessage = useMemo(() => {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      if (!messages[index].pending) return messages[index];
+    }
+
+    return null;
+  }, [messages]);
 
   /** Whoever wrote a position most recently — the map's freshest pin. */
   const latestLocated = useMemo(

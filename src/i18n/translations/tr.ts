@@ -249,7 +249,20 @@ export const tr: Translations = {
   'chat.sendA11y': 'Mesajı gönder',
   'chat.photoA11y': '{{name}} kişisinden fotoğraf',
   'chat.photoFailed': 'Bu fotoğraf yüklenemedi',
+  'chat.photoOpenHint': 'Fotoğrafı tam ekran açar',
+  'chat.photoSending': 'Bu fotoğraf gönderiliyor…',
+  'chat.photoClose': 'Fotoğrafı kapat',
   'chat.photoUploading': 'Fotoğraf gönderiliyor…',
+  'chat.actionsHint': 'Mesaj seçenekleri için basılı tut',
+  'chat.deleteTitle': 'Bu mesaj silinsin mi?',
+  'chat.deleteMessage': 'Ailendeki herkesin sohbetinden kaybolur, varsa fotoğrafı da silinir. Bu geri alınamaz.',
+  'chat.deleteConfirm': 'Mesajı sil',
+
+  'photoComposer.previewA11y': 'Seçtiğin fotoğraf',
+  'photoComposer.captionLabel': 'Açıklama',
+  'photoComposer.captionPlaceholder': 'Bir açıklama ekle…',
+  'photoComposer.hint': 'Gönder’e dokunana kadar hiçbir şey gönderilmez.',
+  'photoComposer.send': 'Gönder',
 
   'chatActions.title': 'Sohbete ekle',
   'chatActions.createTask': 'Görev oluştur',
@@ -259,6 +272,13 @@ export const tr: Translations = {
   'chatActions.sendPhotoHint': 'Galerinden bir tane seç, buraya gönderelim',
   'chatActions.sendPhotoLocked': 'FamApp Gold gerekiyor',
   'chatActions.sendPhotoDisabled': 'Önce Profil’den bir aile kur ya da katıl',
+
+  'messageActions.title': 'Mesaj',
+  'messageActions.createTask': 'Mesajdan görev oluştur',
+  'messageActions.createTaskHint': 'Görev formunu bu metin başlıkken açar',
+  'messageActions.createTaskNoText': 'Bu mesajda başlık olarak kullanılacak metin yok',
+  'messageActions.delete': 'Mesajı sil',
+  'messageActions.deleteHint': 'Ailendeki herkesten kaldırır',
 
   'taskMessage.youAdded': 'Bir görev ekledin',
   'taskMessage.someoneAdded': '{{name}} bir görev ekledi',
@@ -479,6 +499,7 @@ export const tr: Translations = {
   'errors.chat.systemEmpty': 'Sistem mesajının içeriği olmalı.',
   'errors.chat.notMember': 'Bu ailenin üyesi değilsin.',
   'errors.chat.mediaMissing': 'O fotoğraf kaydedilmedi. Yeniden göndermeyi dene.',
+  'errors.chat.deleteRefused': 'Bu mesaj silinemedi.',
 
   'errors.family.forbidden': 'Bunu yapma yetkin yok.',
   'errors.family.notFound': 'Bu aile bulunamadı.',

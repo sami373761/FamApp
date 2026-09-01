@@ -73,6 +73,19 @@ type OpenSection = 'none' | 'assignee' | 'due' | 'note';
 type TaskComposerFormProps = {
   /** The roster to assign from. Empty for a solo user, which is a valid state. */
   members: FamilyMember[];
+  /**
+   * What the title field starts with — Chat's "create task from message" hands
+   * the message's own text down here.
+   *
+   * It is a *seed*, not a controlled value: the form owns the draft from the
+   * first keystroke, so this is read once, when the caller mounts the form.
+   * Both entry points already unmount it on close, which is what makes the next
+   * open start from whatever is passed then rather than from what was typed
+   * last time. A caller passing something longer than a title may be must trim
+   * it — `MAX_TASK_TITLE_LENGTH` is exported for exactly that, and `maxLength`
+   * on the field below only bounds what is typed into it.
+   */
+  initialTitle?: string;
   /** Used to label the assignee chip for the person filling the form in. */
   currentUserId?: string | null;
   /** Resolves to an error message to show in place, or null once stored. */
@@ -87,6 +100,7 @@ type TaskComposerFormProps = {
  */
 export function TaskComposerForm({
   members,
+  initialTitle = '',
   currentUserId,
   onCreate,
   onClose,
@@ -109,7 +123,7 @@ export function TaskComposerForm({
     { value: '1_month', label: t('composer.durationMonth') },
   ];
 
-  const [title, setTitle] = useState('');
+  const [title, setTitle] = useState(initialTitle);
   const [note, setNote] = useState('');
   const [assigneeId, setAssigneeId] = useState<string | null>(null);
   const [duration, setDuration] = useState<TaskDuration>('1_day');

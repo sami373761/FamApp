@@ -300,7 +300,20 @@ export const ru: Translations = {
   'chat.sendA11y': 'Отправить сообщение',
   'chat.photoA11y': 'Фото от {{name}}',
   'chat.photoFailed': 'Не удалось загрузить это фото',
+  'chat.photoOpenHint': 'Открывает фото на весь экран',
+  'chat.photoSending': 'Отправляем это фото…',
+  'chat.photoClose': 'Закрыть фото',
   'chat.photoUploading': 'Отправляем фото…',
+  'chat.actionsHint': 'Нажмите и удерживайте, чтобы открыть действия',
+  'chat.deleteTitle': 'Удалить это сообщение?',
+  'chat.deleteMessage': 'Оно исчезнет у всей семьи, вместе с ним удалится и фото. Отменить это нельзя.',
+  'chat.deleteConfirm': 'Удалить сообщение',
+
+  'photoComposer.previewA11y': 'Выбранное фото',
+  'photoComposer.captionLabel': 'Подпись',
+  'photoComposer.captionPlaceholder': 'Добавьте подпись…',
+  'photoComposer.hint': 'Ничего не отправится, пока вы не нажмёте «Отправить».',
+  'photoComposer.send': 'Отправить',
 
   'chatActions.title': 'Добавить в чат',
   'chatActions.createTask': 'Создать задачу',
@@ -310,6 +323,13 @@ export const ru: Translations = {
   'chatActions.sendPhotoHint': 'Выберите фото из галереи и отправьте его сюда',
   'chatActions.sendPhotoLocked': 'Нужен FamApp Gold',
   'chatActions.sendPhotoDisabled': 'Сначала создайте семью или присоединитесь к ней в профиле',
+
+  'messageActions.title': 'Сообщение',
+  'messageActions.createTask': 'Создать задачу из сообщения',
+  'messageActions.createTaskHint': 'Откроет форму с этим текстом в заголовке',
+  'messageActions.createTaskNoText': 'В этом сообщении нет текста для заголовка',
+  'messageActions.delete': 'Удалить сообщение',
+  'messageActions.deleteHint': 'Оно исчезнет у всей семьи',
 
   'taskMessage.youAdded': 'Вы добавили задачу',
   'taskMessage.someoneAdded': '{{name}} добавил(а) задачу',
@@ -537,6 +557,7 @@ export const ru: Translations = {
   'errors.chat.systemEmpty': 'У системного сообщения должен быть текст.',
   'errors.chat.notMember': 'Вы не участник этой семьи.',
   'errors.chat.mediaMissing': 'Это фото не сохранилось. Попробуйте отправить его ещё раз.',
+  'errors.chat.deleteRefused': 'Не удалось удалить это сообщение.',
 
   'errors.family.forbidden': 'У вас нет прав на это действие.',
   'errors.family.notFound': 'Такую семью найти не удалось.',

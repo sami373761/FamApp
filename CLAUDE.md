@@ -196,7 +196,7 @@ The primitives take closed prop vocabularies rather than free-form style; reach 
 
 Destructive actions are confirmed through `ConfirmDialog` (`visible` `title` `message` `confirmLabel` `tone` `loading` `error` `onConfirm` `onCancel`), never RN's `Alert` — `Alert` does not exist on web, and the write stays *inside* the dialog so a failure reports itself in place instead of dismissing.
 
-`Sheet` (`visible` `title` `showTitle` `description` `dismissible` `onClose`) is the bottom panel — the chat "+" menu and the task form. It stays separate from `ConfirmDialog` on purpose: that one is a centred question with two answers, this one is a surface. **Never present one `Modal` while dismissing another in the same frame** — it is unreliable on iOS, which is why Chat drives *one* `Sheet` through a `'none' | 'actions' | 'task'` state and swaps its children rather than handing off to a second sheet. That is also why `TaskComposerForm` (content) and `TaskComposer` (content in a `Sheet`) are separate exports.
+`Sheet` (`visible` `title` `showTitle` `description` `dismissible` `onClose`) is the bottom panel — the chat "+" menu and the task form. It stays separate from `ConfirmDialog` on purpose: that one is a centred question with two answers, this one is a surface. **Never present one `Modal` while dismissing another in the same frame** — it is unreliable on iOS, which is why Chat drives *one* `Sheet` through a `'none' | 'actions' | 'message' | 'task' | 'photo'` state and swaps its children rather than handing off to a second sheet. That is also why `TaskComposerForm` (content) and `TaskComposer` (content in a `Sheet`) are separate exports.
 
 `Sheet` also owns **the app's only keyboard avoidance inside a modal** — `behavior: 'padding'` on iOS and `'height'` on Android, the second because an RN `Modal` is its own window and does not inherit the activity's `adjustResize`, so without it a focused field at the foot of a sheet sits under the keys. Content a sheet holds must therefore **not** wrap itself in a second `KeyboardAvoidingView`: nested, the inset applies twice and lifts the panel clear off the keyboard it was avoiding. What content owes instead is a scroll view that *yields* — `flexShrink: 1` against the panel's `maxHeight: '100%'` — so the keyboard shrinks the scrolling middle and a footer row stays on screen rather than being pushed off the bottom.
 
@@ -278,11 +278,25 @@ string that silently falls back at runtime.
 
 The Welcome screen (`src/app/index.tsx`) is intentionally down to four things: logo tile, app name, "Get started" (→ `sign-up`) and "I already have an account" (→ `sign-in`). Those two buttons used to be "Create a family" / "Join with a code"; they changed because a family now belongs to an account, so the onboarding routes are not even mounted until there is a session. Feature lists, taglines, stats and legal copy were removed on purpose — do not reintroduce them.
 
-**Every screen reads live Supabase rows. There are no fixtures anywhere.** `src/services/` owns the network: `authService` (sessions), `familyService` (create/join/kick/read/own-profile), `chatService`, `chatMediaService` (chat photos), `taskService`, `locationService`, `placesService` and `purchaseService` (the Gold grant) — all returning a `ServiceResult` from `src/services/result.ts` rather than throwing.
+**Every screen reads live Supabase rows. There are no fixtures anywhere.** `src/services/` owns the network: `authService` (sessions), `familyService` (create/join/kick/read/own-profile/rotate-code), `chatService`, `chatMediaService` (chat photos), `taskService`, `locationService`, `placesService` and `purchaseService` (the Gold grant) — all returning a `ServiceResult` from `src/services/result.ts` rather than throwing.
 
-**`FamilyProvider` (`src/context/FamilyContext.tsx`) is the single source for family data**, keyed on `profile.family_id`, and read through `useFamily()`. It holds the family, members, messages, tasks and saved places, plus `getMember(id)`, `refresh()`, `sendMessage()`, `setTaskStatus()`, `createTask(NewTask)`, `removeMember()` and the three place writes `savePlace(NewPlace)` / `editPlace()` / `deletePlace()`. Fetching per screen instead would mean the same rows arriving four times and a task ticked on one tab going stale on another. Its loaded value is *stamped* with the family id — the same trick `AuthContext` uses for the profile — so leaving one family and joining another cannot show the old members.
+**`FamilyProvider` (`src/context/FamilyContext.tsx`) is the single source for family data**, keyed on `profile.family_id`, and read through `useFamily()`. It holds the family, members, messages, tasks and saved places, plus `getMember(id)`, `refresh()`, `sendMessage()`, the three halves of a photo send (`beginImage()` / `sendImage()` / `discardImage()` — see Chat photos), `setTaskStatus()`, `createTask(NewTask)`, `removeMember()` and the three place writes `savePlace(NewPlace)` / `editPlace()` / `deletePlace()`. Fetching per screen instead would mean the same rows arriving four times and a task ticked on one tab going stale on another. Its loaded value is *stamped* with the family id — the same trick `AuthContext` uses for the profile — so leaving one family and joining another cannot show the old members.
 
 **Empty is a first-class state, not an edge case.** A family of one legitimately has no messages, no tasks and no shared locations, so every list renders `EmptyState` (`@/components/ui`) and every counter reads its real zero. Never substitute a placeholder row, a sample name or a fake count.
+
+**There is exactly one thing in the app rendered before a row backs it, and it is
+`ChatMessage.pending`** (`PendingUpload` in `src/data/types.ts`) — the photo bubble that appears
+while the upload runs. It is not a hole in the rule above, because the rule exists to stop
+*family* data being invented and this is the sender's own action, on their own screen, one second
+ahead of the network, drawn from a file that already exists on the device. Three things keep the
+exception from widening, and a fourth thing is what it costs. It is set **only** by
+`FamilyContext.beginImage` and removed by `sendImage`/`discardImage`, so nothing else can mint one.
+It never survives a reload, because nothing writes it down — a pending message the app forgot is
+the honest outcome of a send that never finished. It is confined to the **chat stream**: Home's
+`deriveActivity` and its latest-message tile both skip a pending message, since "Sami shared a
+photo" is a claim about what the family can see and is not true until they can. And the cost is
+that every new consumer of `messages` has to decide which of those two it is — the sender's view,
+or the record.
 
 **Components hold member *ids*, not member objects**, and the *screen* resolves them via `getMember(id)` before passing a `FamilyMember` down (`ActivityRow` takes `member`, `MessageBubble` takes `sender`, `TaskCard` takes `assignee`). "Is this mine?" is decided by comparing against `user.id` from `useAuth()`.
 
@@ -326,7 +340,7 @@ so "Shuffle" swaps to something already cached instead of blanking the circle.
 
 **A solo user still sees themselves.** With no family the roster is empty, so `FamilyProvider` builds `currentMember` from the profile row via `toFamilyMember(profile, null)` rather than leaving a `?` circle on Home and Profile. Only in that case: once a family exists its roster is the authority, and carries `isAdmin` and a location a lone profile row cannot. A skipper's `display_name` is null until they set one in Edit profile, so they read as "Unnamed member" — that is honest, not a bug to paper over with the email local part.
 
-**Chat is the primary entry point for creating a task, and the schema already had the link.** The composer's leading "+" opens a `Sheet` with "Create task" and "Send photo" — the second now gated on FamApp Gold rather than disabled (see Chat photos below). Creating one goes through `FamilyContext.createTask(NewTask)`, which writes **task first, chat second**: `taskService.createTask` → the optional note as an ordinary `sendMessage` from the user → `chatService.sendSystemMessage` announcing it → `taskService.linkTaskToMessage`, which sets `tasks.source_message_id`. That order is deliberate — a failure anywhere after the first step leaves a real task on the Tasks tab, whereas announcing first would leave a message about a task that never existed. Each step commits to local state as it lands, and each degradation reports itself specifically.
+**Chat is the primary entry point for creating a task, and the schema already had the link.** The composer's leading "+" opens a `Sheet` with "Create task" and "Send photo" — the second now gated on FamApp Gold rather than disabled (see Chat photos below). A **long press on a message** is the second way in, and it opens the same form with the message's text already in the title (see Turning a message into a task). Creating one goes through `FamilyContext.createTask(NewTask)`, which writes **task first, chat second**: `taskService.createTask` → the optional note as an ordinary `sendMessage` from the user → `chatService.sendSystemMessage` announcing it → `taskService.linkTaskToMessage`, which sets `tasks.source_message_id`. That order is deliberate — a failure anywhere after the first step leaves a real task on the Tasks tab, whereas announcing first would leave a message about a task that never existed. Each step commits to local state as it lands, and each degradation reports itself specifically.
 
 Chat renders a message as a `TaskMessageCard` when **a task names it in `source_message_id`** — a lookup built from `tasks`, not a flag on the message. The dependency stays one-way: lose the task and the announcement is still a readable line of chat, which is exactly what the 30-day sweep eventually causes (`source_message_id` is `on delete set null`). `NewTask` has no description because `tasks` has no description column; the composer's optional note is stored as what it actually is, a chat message. Due date is `duration_type`'s three allowed values, with the resolved `expires_at` shown underneath so the choice reads as a date.
 
@@ -398,21 +412,40 @@ in Turkish, so that part is the translator's business.
 **The bucket was always there; the read path was the missing half.** `chat-media` is **private**,
 so `messages.media_url` holds an object *path* and never a URL — which is why an `image` row
 rendered as a grey placeholder for as long as it did. `src/services/chatMediaService.ts` is the
-whole of the new machinery: `pickAndCompressImage()`, `uploadChatImage()`, `getSignedMediaUrl()`
-and `forgetSignedMediaUrl()`. It is the one service that reaches Storage rather than PostgREST,
-and it keeps the `ServiceResult` contract like every other.
+whole of the new machinery: `newMessageId()`, `pickImage()`, `compressImage()`,
+`uploadChatImage()`, `deleteChatImage()`, `getSignedMediaUrl()` and `forgetSignedMediaUrl()`. It is the one service that reaches Storage
+rather than PostgREST, and it keeps the `ServiceResult` contract like every other.
 
-Three facts there are the schema's, not preferences:
+Four facts there are the schema's, not preferences:
 
-- **The object key is `<family_id>/<user_id>/<uuid>.jpg` — three segments.**
+- **The object key is `<family_id>/<user_id>/<message_id>.webp` — three segments.**
   `chat-media: upload to own path` checks `foldername[1]` against the caller's family *and*
-  `foldername[2]` against `auth.uid()`, so a two-segment key is refused by RLS. `delete own or
-  admin` reads the same convention, and so does the `cleanup-media` Edge Function.
-- **JPEG at 1080 px / 0.7**, re-encoded by `expo-image-manipulator` before anything is uploaded.
-  The picker is asked for `quality: 1` on purpose: its own compression would be a *second* lossy
-  pass over an image this re-encodes anyway. An image already narrower than the cap is not
-  upscaled to it.
-- **Cancelling is not a failure.** `pickAndCompressImage` resolves to `null` data with a `null`
+  `foldername[2]` against `auth.uid()`, so a two-segment key such as `<family_id>/<id>.webp` is
+  refused by RLS however tidy it looks — that refusal is a 403 on upload, not a warning. `delete
+  own or admin` reads the same convention, so does the `cleanup-media` Edge Function, and so does
+  the `messages.media_url` column comment.
+- **The last segment is the id of the message the object belongs to**, decided by
+  `newMessageId()` *before* either write, and passed to both `uploadChatImage` and
+  `sendImageMessage`. So the row and the object name each other in both directions: an orphan on
+  either side names its counterpart instead of being a filename nothing joins back to. Writing
+  `messages.id` from the client is safe because `messages: send as self` still pins `sender_id`
+  and `family_id`, so a chosen id buys nothing and a colliding one is a duplicate-key error.
+  It is a **v4-shaped** id built on `Math.random`, not `crypto` — Hermes has neither
+  `randomUUID` nor `getRandomValues`, and the `uuid` in `node_modules` belongs to an Expo config
+  plugin. That is acceptable *here* only because the id is not a secret: RLS decides who may read
+  a message, never the difficulty of guessing its name.
+- **WebP at 1080 px / 0.75**, re-encoded by `expo-image-manipulator` before anything is uploaded.
+  **The re-encode is a security barrier before it is a size one**: decoding to pixels and writing
+  a fresh file drops every EXIF block (which is also why the picker gets `exif: false` — GPS in a
+  holiday photo is the family's location by another route), colour profile, appended payload and
+  anything that was never an image at all, since that last one fails to decode and is reported as
+  `PROCESSING_FAILED` rather than handed to Storage. So it is never skipped: an image already
+  narrower than the cap is not upscaled, but it still goes through the encoder. WebP over JPEG
+  for the bytes — about a third smaller at equivalent quality, landing in a 150–200 KB band — and
+  it encodes on all three targets (`SDImageWebPCoder` on iOS, Skia on Android,
+  `canvas.toBlob('image/webp')` on web) and is in the bucket's `allowed_mime_types`. The picker is
+  asked for `quality: 1` on purpose: its own compression would be a *second* lossy pass.
+- **Cancelling is not a failure.** `pickImage` resolves to `null` data with a `null`
   error when the user backs out, so no caller has to suppress an "error" the user caused on
   purpose.
 
@@ -421,9 +454,9 @@ Three facts there are the schema's, not preferences:
 another entry on a `package.json` that already carries too many unused ones. The twenty-line
 decoder in that file is the trade. Its length formula takes the byte count from the *stripped*
 string — subtracting a padding count as well truncates the tail of every image whose length is
-not a multiple of 3, which is a corrupt JPEG about a third of the time rather than an obvious
-failure. The object name is likewise not a real UUID: there is no `crypto.randomUUID` on Hermes,
-and the `uuid` in `node_modules` belongs to an Expo *config plugin*, not to the app.
+not a multiple of 3, which is a corrupt WebP about a third of the time rather than an obvious
+failure. It is verified exact for every input length 0–599 and on a real `RIFF…WEBP` header, by
+transforming the actual source with sucrase and running it in node.
 
 **Signed URLs are cached at module scope, keyed on the path**, for an hour less a 60-second skew.
 Per component would re-sign on every scroll pass, since the chat list unmounts bubbles as it goes.
@@ -434,6 +467,52 @@ in the row. `ChatImage` in `message-bubble.tsx` is four states: `signing`, `load
 took the object, or the viewer has left the family the key names) will still be true next time —
 but the cached URL is dropped on the way out so a later remount signs afresh.
 
+**Tapping a loaded photo opens `ImageViewer`** (`src/components/chat/image-viewer.tsx`), and its
+whole job is the `contentFit` the bubble cannot use: the bubble is a fixed 4:3 well on `cover`, so
+a run of photos does not make the day's messages jump about, which means the bubble is never the
+whole picture. The viewer is `contain` on `viewerCanvas`. It **re-signs and re-downloads nothing**
+— the bubble passes down the URL it already resolved and both pass `cacheKey: path`, so opening a
+photo is a cache hit. Only a `loaded` photo is pressable: there is nothing to enlarge while one is
+still signing, and a failed one would open onto the same failure with more ceremony. It is a
+`Modal` rather than a route, so the message list keeps its scroll position, and it is the one
+`Modal` on Chat that is not the single `Sheet` — safe because the two can never be open at once
+(the sheet covers the list a photo would have to be tapped in), which satisfies the
+two-modals-in-one-frame rule by unreachability rather than by a state machine.
+
+`viewerCanvas` and `viewerOnCanvas` are **the one pair of tokens deliberately identical in light
+and dark**. A photo viewer is a dark room in either scheme, and a light surround would tint what
+the eye reads as the photo's own shadows. They are not `overlay`, which is a scrim you are meant
+to see the app through; these are near-opaque ground.
+
+**The viewer zooms, on `PanResponder` and `Animated` — not on a gesture library.** One responder
+handles all three gestures, because they are one stream of touches and two responders would fight
+over who claimed the finger: **pinch** (two touches, scale tracked against the distance between
+them when the second finger landed), **pan** (one touch, and only while zoomed, so a stray drag at
+fit-scale cannot slide the photo off its own frame) and **double tap** (toggles fit ↔ 2.5×,
+anchored on the tapped point). `react-native-reanimated` is still a dependency no file imports and
+`react-native-gesture-handler` is still only the root view; waking either for one screen would be
+a larger commitment than the feature. Three details are load-bearing:
+
+- **A single tap closes, and it is deferred by `DOUBLE_TAP_MS`.** The first tap of a double tap is
+  indistinguishable from a single one until the window passes, so closing immediately would shut
+  the viewer every time somebody tried to zoom. The delay is paid only on the background tap; the
+  X button closes at once and is the honest primary way out.
+- **Scale is clamped on release, not during the gesture**, so a pinch past either end resists and
+  springs back instead of stopping dead.
+- **Pan is bounded by `clampOffset`** — at scale *s* the picture is *s* times the frame, so half
+  the overflow is as far as it can travel. Without it a firm drag flings the photo off screen and
+  leaves a black rectangle with no way back but closing. It measures against the *frame*, so a
+  letterboxed photo can show a sliver of ground at the extreme; erring narrow would clip content
+  the user is reaching for, which is the worse failure.
+
+Two caveats. The gesture state lives in a **ref** beside the `Animated.Value`s, because an
+`Animated.Value` has no synchronous reader safe to call from a gesture callback — every commit
+goes through one `apply` so the two cannot drift. And `onClose` is read **through a ref**: the
+responder is memoised for the component's life while the prop is a fresh arrow on every render of
+the bubble, so calling it directly would pin the first render's closure forever. **Pinch does not
+work on desktop web** — there is no second touch — which is exactly why double-tap zoom exists
+rather than being a convenience on top of pinch.
+
 **The Gold gate is client-side and nothing else**, exactly like `canActOnTask`. `messages: send as
 self` does not read `families.is_premium`, and neither does the upload policy, so a free family's
 photo *would* be accepted by the database. `ChatActionsList` reads `useFamily().isPremium` and
@@ -443,18 +522,65 @@ it — making it real means a trigger reading `private.is_family_premium()`. **N
 the tier**: `messages.family_id` is `not null`, so a solo user gets "create or join a family"
 rather than a paywall for something that still would not work.
 
-The flow is **pick → upload → post**, in that order, and the order matters the way `createTask`'s
+**Picking is not sending.** The flow is **pick → confirm → compress → upload → post**, and the
+confirmation step in the middle is the whole reason the service splits `pickImage` from
+`compressImage`. Before it, the picker's own "Done" *was* the send: one tap in the OS's UI put a
+photo in the family chat with no moment in which to notice it was the wrong one. Now the picker
+only picks, and `PhotoComposer` (`src/components/chat/photo-composer.tsx`, the sheet's fourth
+mode) shows the original file, takes an optional caption and waits. Backing out of it costs one
+discarded selection and no network at all — nothing has been re-encoded, uploaded or inserted.
+
+That is also the only place a **caption** could ever have been typed, which is why
+`messages.content` on an `image` row is finally written: `messages_payload_matches_type` always
+allowed it, but until there was a moment between choosing a photo and sending it there was nowhere
+to type. It is one row rather than a photo followed by a text message, which is what keeps the
+caption attached to its picture instead of merely near it; an empty one is stored as NULL, since a
+blank string would render an empty line under the photo.
+
+The preview is the **original**, not the re-encoded file, and the compression is deliberately
+deferred to "Send" — a photo somebody thinks better of should not cost a decode and an encode, and
+the original is the honest preview of what was picked anyway.
+
+The upload order still matters the way `createTask`'s
 does: the object exists before the row that names it, because a message pointing at nothing is a
-broken photo for the whole family while an object nothing points at is invisible. `chatService.
-sendImageMessage(familyId, path)` writes the row and `FamilyContext.sendImage(path)` appends it
-locally — the same split as `sendMessage`. Progress and failure live on the *screen*, in a strip
-above the composer, because the picker closes the sheet that started the flow. iOS waits
-`SHEET_DISMISS_MS` before presenting the picker: asking it to present over a controller that is
-mid-dismissal is the same two-modals-in-one-frame hazard that keeps Chat down to a single `Sheet`.
+broken photo for the whole family while an object nothing points at is invisible. The id comes
+first and is threaded through both halves — `chatService.sendImageMessage(familyId, messageId,
+path, caption)` writes the row and `FamilyContext.sendImage(messageId, path, caption)` appends it
+locally, the same split as `sendMessage`. **Reconciliation needs nothing extra**: the local append and the socket's
+echo of that same insert are matched on the primary key by `withMessage`, exactly as they would
+be for a server-generated id, so a photo can only land once whichever arrives first.
+**The photo joins the conversation before it is uploaded.** `beginImage(messageId, localUri,
+caption)` commits a `pending` message the moment "Send" is pressed — *before* the re-encode, on
+the original file — so the photo is in the stream from the instant the user commits to it rather
+than after a compression they have no reason to wait through. The two files look the same; the
+compressed one differs only in bytes. `withMessage` is what makes the swap seamless and is the one reducer
+that does **not** simply ignore a duplicate id: a confirmed row landing on a pending one at the
+same id *replaces* it, and does so by removing and re-inserting rather than overwriting in place,
+because the server stamps `created_at` itself and leaving the row at the placeholder's index would
+file it out of order against anything that arrived during the upload. A confirmed row landing on
+a confirmed one is still ignored, so the local append and the socket's echo cannot both land. The
+failure path removes the bubble — `sendImage` does it for a failed insert, the screen calls
+`discardImage` for a failed upload, and **both are unguarded by `useIsMounted`**, because the
+placeholder lives in the context rather than in the screen and leaving the tab mid-upload must
+still take it back out.
+
+The screen therefore runs two stages: `preparing` is the picker and the gaps either side of it,
+`uploading` is compress-and-transfer. Failure lives on the *screen*,
+in a strip above the composer, because the picker closes the sheet that started the flow — but the
+strip's *progress* half only shows during `preparing`, when the picker and the re-encode have
+nothing to show yet. Once the bubble is up it carries the wait, and the strip stands down rather
+than saying the same thing twice on one screen.
+
+iOS pays `MODAL_DISMISS_MS` **twice, in both directions**: the sheet closes before the picker
+opens, and the picker closes before the sheet comes back holding the confirmation step. Asking iOS
+to present over a controller that is mid-dismissal is the same two-modals-in-one-frame hazard that
+keeps Chat down to a single `Sheet` — and the second wait is that hazard with the roles swapped,
+*our* modal presenting over the picker's dismissal. Skipping it is a sheet that never appears,
+leaving a photo picked and nothing to send it with.
 
 `app.json` gains `expo-image-picker` with `photosPermission` / `cameraPermission` copy, next to
 `expo-location`'s. **The camera path exists in the service and no UI reaches it** — the sheet
-offers the library only, and `pickAndCompressImage('camera')` is there for a second row that has
+offers the library only, and `pickImage('camera')` is there for a second row that has
 not been argued for yet.
 
 One caveat here has **lapsed**: the image retention sweep used to be a no-op because the Vault
@@ -462,6 +588,112 @@ secrets `cleanup-media` needs had never been created. They exist on the live pro
 (`project_url`, `service_role_key`), so the nightly 03:30 UTC job really does call the function
 and photos really are purged after 10 days. Verify with `select name from
 vault.decrypted_secrets` before relying on either statement again.
+
+### Deleting a message
+
+**`messages: delete own or admin` is real enforcement, not a client courtesy** — unlike
+`canActOnTask` and the chat-photo Gold gate, which sit on top of permissive policies. The sender
+may delete their own row and a family admin may moderate anyone's, and a client that tried
+otherwise would be refused by the database rather than merely discouraged by the UI.
+
+**A DELETE blocked by RLS is not an error — it deletes nothing and succeeds.** The policy is a
+`using` clause, so a row the caller may not touch simply fails to match and PostgREST returns 204
+with no complaint. Trusting that would report somebody else's message as deleted and then have it
+reappear on the next refresh, so `chatService.deleteMessage` asks for the row back with `.select()`
+and reads an empty array as the refusal it is (`NOT_ALLOWED`). That one branch cannot distinguish
+"not yours" from "already gone" — both match nothing — and does not need to: a row already swept
+or removed elsewhere is in exactly the state the caller wanted.
+
+**Row first, object second, and the object's failure is not reported.** `FamilyContext.deleteMessage`
+deletes the row, then fires `chatMediaService.deleteChatImage` for an image message without
+awaiting its verdict. The two orders fail differently and only one is survivable: dropping the
+object first and then failing on the row leaves a message pointing at nothing, which is a broken
+photo for the whole family; dropping the row first and then failing on the object leaves something
+invisible that the 10-day `cleanup-media` sweep collects. That is the upload's own order in
+reverse. `forgetSignedMediaUrl` runs regardless, so a cached URL for a dead object cannot be handed
+to `expo-image` afterwards.
+
+**It is optimistic, and the restore is what makes that safe.** The row leaves the local list
+before the request goes out and is put back — *in its own place*, because `withMessage` re-files by
+`createdAt` rather than appending — if the server refuses. The message object is captured before
+the removal, since it is the only copy left afterwards and is also where `mediaUrl` is read from.
+A `pending` placeholder is dropped locally without asking the server at all, there being no row yet.
+
+**The UI is a long press *into the message menu*, and the confirmation is still `ConfirmDialog`** —
+never `Alert`, which does not exist on web. The gesture stopped going straight to the dialog when a
+second thing could be done with a message (see Turning a message into a task): it now opens the
+sheet, and "Delete message" is the row that asks. The *screen* owns one dialog rather than each
+bubble owning its own: a `Modal` per message would mount two hundred of them to ask one question.
+The bubble is a `PressableScale` with `feedback="none"` (a tap on a bubble does nothing, and
+buzzing for a non-event is wrong) that fires its own `tap` haptic on the long press — `warning`
+moved to where something is actually risked, which is the dialog. On a photo message the long press
+is **forwarded into `ChatImage`**, because RN gives the touch to the deepest view that claims it and
+the picture is most of the bubble — without that, only the thin margin around it would respond.
+
+**Menu to dialog is the one place Chat presents a second `Modal`, and it pays for it.**
+`requestDelete` closes the sheet, waits `MODAL_DISMISS_MS`, and only then opens the dialog — the
+same gap the picker is given in both directions, and for the same iOS reason. The alternative was
+the Map's in-sheet confirmation, which was not taken here because the dialog is where the write
+already lives: it holds its own spinner and renders a refusal in place, which is what makes an
+optimistic delete safe to offer.
+
+A deletion reaches the other devices **live**, which is the one thing this needed from the realtime
+layer: `messages` carries `replica identity full`, so its DELETE event arrives with the old row and
+the `family_id` filter can match it. See the Realtime section.
+
+### Turning a message into a task
+
+**Long-pressing a bubble opens a menu, and "Create task from message" is a prefill — nothing more.**
+`MessageActionsList` (`src/components/chat/message-actions-sheet.tsx`) is the menu; picking the task
+row swaps Chat's one `Sheet` to the same `TaskComposerForm` the "+" opens, with `initialTitle` set
+to the message's own text. From there every step is the existing flow: `FamilyContext.createTask`
+writes the task, posts the note, announces it and links `tasks.source_message_id` to **the
+announcement it just wrote**.
+
+That last point is the design decision, and it is deliberate rather than an omission. Pointing
+`source_message_id` at the *converted* message would have been the shorter route to "reflected
+inline in the chat", and it is wrong twice: Chat draws any message a task names as a
+`TaskMessageCard`, so the author's own line would be **replaced** by a card — their words gone from
+the conversation the moment somebody made a task out of them — and that card credits its author from
+`message.senderId`, so a task Sami created from Mehmet's message would read "MEHMET ADDED A TASK".
+The announcement is the row that is honestly about the task, which is why it is the row the task
+names. The original message stays exactly where it was, as its author wrote it.
+
+Three rules decide what the menu offers, and each is a fact about the row rather than a preference:
+
+- **A `system` message cannot be converted.** It is the app's own announcement of a task that
+  already exists, so its text is copy nobody wrote — and the task it announces is already on the
+  Tasks tab. The row is dimmed and says why, the same way the "+" menu dims what a solo user cannot
+  do.
+- **A photo with no caption cannot be either**, having no text to title anything with. A caption
+  *can*: it is the sender's own words, so `taskTitleFrom` reads `content` rather than testing
+  `type`.
+- **The seed is capped at `MAX_TASK_TITLE_LENGTH` (200), and a message may be 500.** `maxLength` on
+  the title field only bounds what is *typed* into it, so an over-long prefill would otherwise sit
+  in the form with "Create task" greyed out and nothing on screen explaining the refusal. It is cut
+  to 199 plus an ellipsis, which is a marker the user can edit around.
+
+The long press itself is offered when *either* row would be live — this message is one the caller
+may delete, or it carries text a task could be titled with — so a member who cannot delete somebody
+else's message can still turn it into a task, and a photo with no caption from another member keeps
+the inert bubble it always had. The sheet's header repeats the message back (`ACTION_EXCERPT_LENGTH`,
+120 chars), because the panel covers the list it was opened from and the menu would otherwise be two
+actions with no subject.
+
+`ActionRow` (`src/components/chat/action-row.tsx`) was extracted out of `ChatActionsList` so this
+menu and the "+" menu cannot drift: one row component, one set of states (available, dimmed with a
+reason, busy, sold), and a `tone` for the destructive one. It is the same reasoning that keeps
+`TaskComposerForm` shared between Chat and the Tasks FAB.
+
+### Keyboard behaviour in Chat
+
+The message list is `keyboardDismissMode="on-drag"` plus `keyboardShouldPersistTaps="handled"`, and
+both halves are needed. Dragging the conversation in either direction puts the keyboard away —
+reading back through the day is the clearest signal somebody has stopped typing, and `interactive`
+was not used because it ties the keyboard to the finger and so only responds to a downward drag.
+`handled` is what keeps a tap that lands on something from being swallowed by the dismissal:
+without it the first tap anywhere in the list is spent closing the keyboard, so opening a photo or
+long-pressing a bubble would need two.
 
 ### Push notifications
 
@@ -719,8 +951,8 @@ localised number with nothing behind it would be invented twice. The product nam
 ### Realtime
 
 **One websocket, one channel, keyed on the family.** `src/services/realtimeService.ts`
-opens `family-${familyId}` and binds seven `postgres_changes` listeners — `messages`
-(INSERT), `tasks` (INSERT/UPDATE/DELETE), `locations` (INSERT/UPDATE) and `profiles`
+opens `family-${familyId}` and binds eight `postgres_changes` listeners — `messages`
+(INSERT/DELETE), `tasks` (INSERT/UPDATE/DELETE), `locations` (INSERT/UPDATE) and `profiles`
 (UPDATE) — each filtered `family_id=eq.…`. It is a service like every other: the socket
 is network, so it lives here and `FamilyContext` never touches `supabase`. What it hands
 up is domain types through the **same mappers the fetching services use**
@@ -731,13 +963,19 @@ is the one to keep.
 
 **Duplication is settled by reducers, not by suppressing the echo.** Every commit into
 `LoadedFamily` — this device's own write *and* another member's event — goes through
-`withMessage` / `withTask` / `withoutTask` / `withLocation` / `withProfile` in
+`withMessage` / `withoutMessage` / `withTask` / `withoutTask` / `withLocation` / `withProfile` in
 `FamilyContext`, all matching on the primary key. So `sendMessage` appending the row its
 insert returned and the socket delivering that same row a moment later can only land
 once, in either order. Each reducer returns the state it was handed when there is nothing
 to do, so React skips the render. They also keep the fetch order: tasks re-sort by
 `expires_at`, members by admin-then-`created_at`, and a message is spliced by
 `createdAt` rather than appended, because a socket event and a local append can cross.
+
+`withMessage` has the one exception to "same id means ignore it": a confirmed row landing on a
+**pending** one replaces it, which is what retires an optimistic photo bubble (see Chat photos).
+`withoutMessage` is likewise not a general delete — nothing removes a real message, and no delete
+listener could hear it anyway, since only `messages` and `tasks` carry `replica identity full`;
+it exists to take that bubble back when the send fails.
 
 Three things fall out of the schema rather than out of preference:
 
@@ -753,7 +991,9 @@ Three things fall out of the schema rather than out of preference:
   and the event is never delivered. Two consequences: switching location sharing off
   clears the pin on the *owner's* device only, and a member being removed (or leaving)
   reaches everyone else on the next refresh. Both are `replica identity full` migrations
-  away, and neither should be faked client-side.
+  away, and neither should be faked client-side. **`messages` does have it**, which is
+  what lets a deleted message vanish from every device live rather than on next refresh —
+  the delete listener is the one thing message deletion needed from this layer.
 - **A member joining arrives as a `profiles` UPDATE**, because the row already existed and
   `join_family` only sets its `family_id`. `withProfile` therefore *adds* an unknown id
   rather than ignoring it, and the roster gains the new member live.
@@ -775,7 +1015,7 @@ calls `realtime.setAuth`.
 
 ## Backend (Supabase)
 
-`supabase/` holds eleven migrations, two Edge Functions, `templates/confirmation.html` and a README
+`supabase/` holds twelve migrations, two Edge Functions, `templates/confirmation.html` and a README
 covering setup. The **migrations** are applied to the live project — treat them as history and
 add a new one rather than editing an applied file. That includes
 `20260825140000_family_premium_tier.sql`: it is pushed, `db advisors --type security`
@@ -808,6 +1048,26 @@ ceremony — RLS hides a family from anyone not already in it, so a joiner *cann
 by code, and the join code is generated server-side inside a uniqueness retry loop. Clients
 also never write `profiles.family_id` directly: a trigger rejects it. Leaving a family is the
 one exception (`family_id -> NULL` on your own row).
+
+**Rotating that code is a fourth RPC, for three overlapping reasons.**
+`public.regenerate_join_code()` (`20260901100000_regenerate_join_code.sql`) generates a
+replacement through `private.random_join_code()` inside the same uniqueness retry loop
+`create_family()` uses, writes it to `families.join_code` and returns it. Each of the three
+would force an RPC on its own: `private.guard_family_columns()` rejects **every** direct write
+to `join_code`, so no client UPDATE lands; uniqueness is settled by the unique index inside a
+loop, which a single statement cannot express; and `families: creator updates` is scoped to
+`created_by`, so a non-creator admin could not touch the row at all — admin, not creator, is the
+boundary this wants. SECURITY DEFINER is what gets it past the guard, whose first clause exempts
+the owning role, exactly as `set_family_premium()` already relies on. **The guard is not relaxed
+by this**: a client still cannot *choose* a code, only ask for a generated one.
+
+It is admin-only, and checks `private.current_family_id()` *and* `private.is_family_admin()`
+behind one 42501 sentence — a profile can legitimately carry `is_admin` with a NULL `family_id`,
+since `guard_profile_columns()` lets a member clear their own and says nothing about `is_admin`,
+and "admin of no family" is not an admin of anything. That one sentence is also why the feature
+needed no new `FamilyErrorCode`: `familyService` already maps 42501 + `/admin/i` to `NOT_ADMIN`
+with the server's text. **Nobody is ejected** — membership is `profiles.family_id`, which this
+never writes; the old code stops working only because `join_family` reads the column.
 
 **Deleting an account is an RPC for the same reason, plus a worse one.**
 `public.delete_account()` is `SECURITY DEFINER` because the publishable key cannot reach
@@ -865,6 +1125,24 @@ this file said so; check `vault.decrypted_secrets` rather than trusting either c
   needs `convert_from(body,'utf8')::jsonb` — casting straight to jsonb fails with "cannot cast type
   bytea to jsonb" and takes the whole batch down with it; and `db query --linked` aborts the
   entire statement batch on any error, which rolls the block back anyway.
+- **`db query --linked` prints only the *last* result set.** A verification script that ends on a
+  bookkeeping `select count(*)` therefore throws away the answer it was written to show. Put the
+  interesting statement last, or gather everything into one final `select` — inside the
+  transaction, `create temp table r on commit drop as select public.my_rpc()` is what lets the
+  returned value and the row it changed be compared side by side. They do have to be **separate
+  statements**: `select public.my_rpc(), (select join_code from public.families where …)` reports
+  the code as *unchanged*, because every subquery reads the snapshot taken when the statement
+  began rather than the row the volatile function has just written. That reads as the RPC
+  silently doing nothing, and it is the statement shape lying, not the function.
+- **The throwaway Postgres cannot keep its socket in the scratchpad.** A unix socket path is
+  capped at 103 bytes and the per-session scratchpad spends ~110 before adding a filename, so
+  `psql -h <scratchpad>` fails with "Unix-domain socket path … is too long" while the cluster is
+  up and perfectly healthy — which reads as a server that never started. Give `pg_ctl -o` a
+  `-k /private/tmp/<short>` and point `psql -h` at that same directory; only the socket is
+  length-limited, so the data directory can stay in the scratchpad. Worth the setup: with stubs
+  for `auth.uid()` and the `private` helpers, `20260901100000_regenerate_join_code.sql` was
+  exercised offline — admin rotation, both refusal paths, `guard_family_columns()` still blocking
+  a direct UPDATE, and the retry loop's give-up path — before anything reached the live project.
 - **Direct DML on `storage.objects` is blocked on the hosted project** ("Use the Storage API
   instead"), so SQL cannot free storage bytes — only the `cleanup-media` Edge Function can.
 - **A SQL-language function body is validated at creation time**, so a helper that selects from

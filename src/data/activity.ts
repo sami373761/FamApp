@@ -50,7 +50,12 @@ export function deriveActivity({
     // task already contributes its own event below. Including it would list the
     // same thing twice — and the type test further down would report it as a
     // photo, which it is not.
-    .filter((message) => message.type !== 'system')
+    //
+    // A `pending` one is a photo this device is still uploading. The sender's
+    // own chat bubble is allowed to run ahead of the row, because it is their
+    // action and it is veiled; this feed is a record of what the family did,
+    // and "Sami shared a photo" is not true until the family can see it.
+    .filter((message) => message.type !== 'system' && !message.pending)
     .map((message) => ({
       id: `message-${message.id}`,
       kind: 'message',

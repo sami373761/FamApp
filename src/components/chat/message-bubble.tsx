@@ -3,10 +3,13 @@ import { Image } from 'expo-image';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 
+import { ImageViewer } from '@/components/chat/image-viewer';
 import { Avatar } from '@/components/ui/avatar';
+import { PressableScale } from '@/components/ui/pressable-scale';
 import { Text } from '@/components/ui/text';
 import { clockTime, memberName } from '@/data/format';
 import type { ChatMessage, FamilyMember } from '@/data/types';
+import { useHaptics } from '@/hooks/use-haptics';
 import { useIsMounted } from '@/hooks/use-safe-back';
 import { useTheme } from '@/hooks/use-theme';
 import { useTranslation } from '@/hooks/use-translation';
@@ -21,12 +24,56 @@ type MessageBubbleProps = {
   isOwn: boolean;
   /** False when the previous message came from the same person — hides the avatar/name. */
   showAuthor: boolean;
+  /**
+   * Whether the long press has anything to open — the screen's reading of what
+   * this message can do, which is `messages: delete own or admin` for the
+   * delete row and "there is a family and some text" for the task row. False
+   * makes the bubble inert rather than opening a menu with nothing live in it.
+   */
+  canAct?: boolean;
+  /**
+   * Asks the screen to open the message menu. The bubble neither deletes
+   * anything nor creates anything itself — it only reports the gesture.
+   */
+  onRequestActions?: () => void;
 };
 
 /** WhatsApp-style bubble: own messages right-aligned and tinted, others left. */
-export function MessageBubble({ message, sender, isOwn, showAuthor }: MessageBubbleProps) {
+export function MessageBubble({
+  message,
+  sender,
+  isOwn,
+  showAuthor,
+  canAct = false,
+  onRequestActions,
+}: MessageBubbleProps) {
   const { colors } = useTheme();
   const i18n = useTranslation();
+  const haptic = useHaptics();
+
+  /**
+   * A pending photo has no row yet — nothing to delete, and nothing a task
+   * could be linked to — so long-pressing one would offer actions against
+   * something the server has never heard of. The send is a second or two long
+   * and finishes on its own; waiting it out is the simpler story than a cancel
+   * that has to unpick a half-finished upload.
+   */
+  const canLongPress = canAct && !!onRequestActions && !message.pending;
+
+  /**
+   * Fired here rather than left to `PressableScale`, whose one haptic answers
+   * `onPress` — a tap on a bubble does nothing at all and must stay silent,
+   * while the long press has just opened a menu and should be felt. `tap` is
+   * the effect for reaching a list of choices; the destructive `warning` moved
+   * to the delete row's own confirmation, which is where something is actually
+   * being risked.
+   */
+  const handleLongPress = () => {
+    if (!canLongPress) return;
+
+    haptic('tap');
+    onRequestActions?.();
+  };
 
   return (
     <View style={[styles.row, isOwn ? styles.rowOwn : styles.rowOther]}>
@@ -43,7 +90,14 @@ export function MessageBubble({ message, sender, isOwn, showAuthor }: MessageBub
         </View>
       ) : null}
 
-      <View
+      <PressableScale
+        // `none`: a bubble is not a button, and a tap on one does nothing at
+        // all — buzzing for that would be feedback for a non-event.
+        feedback="none"
+        disabled={!canLongPress}
+        onLongPress={handleLongPress}
+        accessibilityRole={canLongPress ? 'button' : undefined}
+        accessibilityHint={canLongPress ? i18n.t('chat.actionsHint') : undefined}
         style={[
           styles.bubble,
           {
@@ -58,12 +112,22 @@ export function MessageBubble({ message, sender, isOwn, showAuthor }: MessageBub
           </Text>
         ) : null}
 
-        {message.type === 'image' && message.mediaUrl ? (
+        {/*
+          Two sources for one well. A pending photo is the local file this
+          device just wrote and has no object path to sign; a sent one is a path
+          and nothing else. They are separate components rather than one with a
+          nullable path because almost nothing is shared — the pending one signs
+          nothing, caches nothing, cannot fail and cannot be opened full screen.
+        */}
+        {message.type === 'image' && message.pending ? (
+          <PendingImage uri={message.pending.localUri} />
+        ) : message.type === 'image' && message.mediaUrl ? (
           <ChatImage
             path={message.mediaUrl}
             label={i18n.t('chat.photoA11y', {
               name: sender ? memberName(i18n, sender) : i18n.t('common.someone'),
             })}
+            onLongPress={canLongPress ? handleLongPress : undefined}
           />
         ) : null}
 
@@ -77,8 +141,62 @@ export function MessageBubble({ message, sender, isOwn, showAuthor }: MessageBub
           <Text variant="label" style={{ color: isOwn ? colors.onPrimary : colors.textTertiary }}>
             {clockTime(i18n, message.createdAt)}
           </Text>
-          {isOwn ? <Ionicons name="checkmark-done" size={13} color={colors.onPrimary} /> : null}
+          {/*
+            The tick is "the family has this now", so a photo still uploading
+            must not show one — it gets the clock every messaging app uses for
+            the same moment. `createdAt` beside it is this device's guess until
+            the row lands, which is the one thing on a pending bubble that can
+            be a second or two wrong, and the least of anything worth saying.
+          */}
+          {isOwn ? (
+            <Ionicons
+              name={message.pending ? 'time-outline' : 'checkmark-done'}
+              size={13}
+              color={colors.onPrimary}
+            />
+          ) : null}
         </View>
+      </PressableScale>
+    </View>
+  );
+}
+
+/**
+ * The photo this device is still uploading.
+ *
+ * It is the *real* picked image, not a grey block: the file has existed on
+ * disk since the picker returned it, and the bubble goes up the moment the user
+ * presses Send — before the re-encode, so there is no wait to show a photo the
+ * device is already holding. The veil over it is what says "not yet": a scrim in the
+ * same `overlay` token every modal backdrop uses, plus a spinner.
+ *
+ * Not pressable, and that is the point of the distinction rather than an
+ * oversight — full screen means the stored photo, and there is not one yet.
+ * The bubble becomes pressable on its own when `sendImage` swaps this row for
+ * the confirmed one, with no transition to arrange: the well is the same size
+ * and holds the same picture.
+ *
+ * `cachePolicy="none"` because a `file://` URI is already local; caching it
+ * would copy bytes the device is about to delete from its own cache directory.
+ */
+function PendingImage({ uri }: { uri: string }) {
+  const { colors } = useTheme();
+  const { t } = useTranslation();
+
+  return (
+    <View
+      accessibilityRole="image"
+      accessibilityLabel={t('chat.photoSending')}
+      style={[styles.image, { backgroundColor: colors.surfaceMuted }]}>
+      <Image
+        source={{ uri }}
+        style={StyleSheet.absoluteFill}
+        contentFit="cover"
+        cachePolicy="none"
+      />
+
+      <View style={[styles.imageOverlay, { backgroundColor: colors.overlay }]}>
+        <ActivityIndicator size="small" color={colors.viewerOnCanvas} />
       </View>
     </View>
   );
@@ -103,18 +221,36 @@ type ChatImageStatus = 'signing' | 'loading' | 'loaded' | 'failed';
  * at the same answer. The cached URL is dropped on the way out so a later
  * remount signs a fresh one rather than retrying a URL that has since expired.
  */
-function ChatImage({ path, label }: { path: string; label: string }) {
+function ChatImage({
+  path,
+  label,
+  onLongPress,
+}: {
+  path: string;
+  label: string;
+  /**
+   * Forwarded from the bubble, because this pressable would otherwise swallow
+   * it. RN gives the touch to the deepest view that claims it, and on a photo
+   * message the picture *is* most of the bubble — so without this, long-pressing
+   * the obvious target does nothing and only the thin margin around it works.
+   */
+  onLongPress?: () => void;
+}) {
   const { colors } = useTheme();
   const { t } = useTranslation();
   const isMounted = useIsMounted();
   const [status, setStatus] = useState<ChatImageStatus>('signing');
   const [url, setUrl] = useState<string | null>(null);
+  const [isViewerOpen, setIsViewerOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
 
     setStatus('signing');
     setUrl(null);
+    // A recycled bubble is a different photo; leaving the viewer open across
+    // that swap would show the new one under the old one's gesture.
+    setIsViewerOpen(false);
 
     void getSignedMediaUrl(path).then(({ data, error }) => {
       if (cancelled || !isMounted()) return;
@@ -133,44 +269,74 @@ function ChatImage({ path, label }: { path: string; label: string }) {
     };
   }, [isMounted, path]);
 
-  return (
-    <View style={[styles.image, { backgroundColor: colors.surfaceMuted }]}>
-      {url ? (
-        <Image
-          // `cacheKey` is the object path, not the URL: a signed URL changes
-          // every hour but the bytes behind it never do, so keying the disk
-          // cache on the path is what stops an expiry re-downloading a photo
-          // the device already has. It is the same reason the *row* stores a
-          // path — today's signing scheme is not what identifies the object.
-          source={{ uri: url, cacheKey: path }}
-          style={StyleSheet.absoluteFill}
-          contentFit="cover"
-          accessibilityLabel={label}
-          cachePolicy="disk"
-          recyclingKey={path}
-          onLoad={() => isMounted() && setStatus('loaded')}
-          onError={() => {
-            forgetSignedMediaUrl(path);
-            if (isMounted()) setStatus('failed');
-          }}
-        />
-      ) : null}
+  // Only a photo that is actually on screen can be opened: there is nothing to
+  // show full size while it is still signing, and a failed one would open onto
+  // the same failure with more ceremony.
+  const canOpen = status === 'loaded' && url !== null;
 
-      {status === 'failed' ? (
-        <View style={styles.imageOverlay}>
-          <Ionicons name="image-outline" size={24} color={colors.textTertiary} />
-          <Text variant="label" color="textTertiary" center>
-            {t('chat.photoFailed')}
-          </Text>
-        </View>
-      ) : status !== 'loaded' ? (
-        // The skeleton is the well itself plus a spinner — nothing is drawn
-        // over the image once it lands, so there is no fade to fight with.
-        <View style={styles.imageOverlay}>
-          <ActivityIndicator size="small" color={colors.textTertiary} />
-        </View>
-      ) : null}
-    </View>
+  return (
+    <>
+      <PressableScale
+        accessibilityRole={canOpen ? 'imagebutton' : 'image'}
+        accessibilityLabel={label}
+        accessibilityHint={canOpen ? t('chat.photoOpenHint') : undefined}
+        disabled={!canOpen}
+        onPress={() => setIsViewerOpen(true)}
+        onLongPress={onLongPress}
+        style={[styles.image, { backgroundColor: colors.surfaceMuted }]}>
+        {url ? (
+          <Image
+            // `cacheKey` is the object path, not the URL: a signed URL changes
+            // every hour but the bytes behind it never do, so keying the disk
+            // cache on the path is what stops an expiry re-downloading a photo
+            // the device already has. It is the same reason the *row* stores a
+            // path — today's signing scheme is not what identifies the object.
+            source={{ uri: url, cacheKey: path }}
+            style={StyleSheet.absoluteFill}
+            contentFit="cover"
+            // The bubble states the photo; the pressable around it owns the
+            // label and the role, so repeating it here would have a screen
+            // reader announce the same photo twice.
+            cachePolicy="disk"
+            recyclingKey={path}
+            onLoad={() => isMounted() && setStatus('loaded')}
+            onError={() => {
+              forgetSignedMediaUrl(path);
+              if (isMounted()) setStatus('failed');
+            }}
+          />
+        ) : null}
+
+        {status === 'failed' ? (
+          <View style={styles.imageOverlay}>
+            <Ionicons name="image-outline" size={24} color={colors.textTertiary} />
+            <Text variant="label" color="textTertiary" center>
+              {t('chat.photoFailed')}
+            </Text>
+          </View>
+        ) : status !== 'loaded' ? (
+          // The skeleton is the well itself plus a spinner — nothing is drawn
+          // over the image once it lands, so there is no fade to fight with.
+          <View style={styles.imageOverlay}>
+            <ActivityIndicator size="small" color={colors.textTertiary} />
+          </View>
+        ) : null}
+      </PressableScale>
+
+      {/*
+        Mounted beside the bubble rather than inside it, and only once it has a
+        URL: the viewer re-signs nothing, it borrows the one this bubble already
+        resolved. Closing is local state, so a photo opened and shut leaves the
+        message list exactly where it was.
+      */}
+      <ImageViewer
+        visible={isViewerOpen}
+        url={url}
+        path={path}
+        label={label}
+        onClose={() => setIsViewerOpen(false)}
+      />
+    </>
   );
 }
 

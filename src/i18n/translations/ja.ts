@@ -242,7 +242,20 @@ export const ja: Translations = {
   'chat.sendA11y': 'メッセージを送信',
   'chat.photoA11y': '{{name}}さんの写真',
   'chat.photoFailed': 'この写真を読み込めませんでした',
+  'chat.photoOpenHint': '写真を全画面で開きます',
+  'chat.photoSending': 'この写真を送信中…',
+  'chat.photoClose': '写真を閉じる',
   'chat.photoUploading': '写真を送信中…',
+  'chat.actionsHint': '長押しでメッセージの操作を表示',
+  'chat.deleteTitle': 'このメッセージを削除しますか？',
+  'chat.deleteMessage': '家族全員のチャットから消え、写真も一緒に削除されます。元に戻せません。',
+  'chat.deleteConfirm': 'メッセージを削除',
+
+  'photoComposer.previewA11y': '選んだ写真',
+  'photoComposer.captionLabel': 'キャプション',
+  'photoComposer.captionPlaceholder': 'キャプションを追加…',
+  'photoComposer.hint': '「送信」を押すまで何も送信されません。',
+  'photoComposer.send': '送信',
 
   'chatActions.title': 'チャットに追加',
   'chatActions.createTask': 'タスクを作成',
@@ -252,6 +265,13 @@ export const ja: Translations = {
   'chatActions.sendPhotoHint': 'ライブラリから選んでここに投稿します',
   'chatActions.sendPhotoLocked': 'FamApp Gold が必要です',
   'chatActions.sendPhotoDisabled': '先にプロフィールから家族を作成するか参加してください',
+
+  'messageActions.title': 'メッセージ',
+  'messageActions.createTask': 'メッセージからタスクを作成',
+  'messageActions.createTaskHint': 'この本文をタイトルにしてフォームを開きます',
+  'messageActions.createTaskNoText': 'このメッセージにはタイトルにできる文がありません',
+  'messageActions.delete': 'メッセージを削除',
+  'messageActions.deleteHint': '家族全員から消えます',
 
   'taskMessage.youAdded': 'タスクを追加しました',
   'taskMessage.someoneAdded': '{{name}}さんがタスクを追加しました',
@@ -471,6 +491,7 @@ export const ja: Translations = {
   'errors.chat.systemEmpty': 'システムメッセージには内容が必要です。',
   'errors.chat.notMember': 'あなたはこの家族のメンバーではありません。',
   'errors.chat.mediaMissing': 'その写真は保存されませんでした。もう一度送ってみてください。',
+  'errors.chat.deleteRefused': 'このメッセージを削除できませんでした。',
 
   'errors.family.forbidden': 'その操作を行う権限がありません。',
   'errors.family.notFound': 'その家族は見つかりませんでした。',
