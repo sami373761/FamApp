@@ -1,9 +1,10 @@
-import { StyleSheet, View } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { Animated, Easing, Platform, StyleSheet, View } from 'react-native';
 
 import { PressableScale } from '@/components/ui/pressable-scale';
 import { Text } from '@/components/ui/text';
 import { useTheme } from '@/hooks/use-theme';
-import { Radius, Spacing } from '@/theme';
+import { Motion, Radius, Spacing } from '@/theme';
 
 export type SegmentedOption<T extends string> = {
   value: T;
@@ -28,6 +29,15 @@ type SegmentedProps<T extends string> = {
  * selection reads as raised out of a recessed well — the direction greys are
  * allowed to move on a white canvas. In dark mode the same pair steps up from
  * the canvas, which is that scheme's convention.
+ *
+ * That raised segment is **one view that slides**, not a background switched on
+ * and off per option. Two segments changing colour in the same frame says a
+ * choice was replaced; one thumb travelling says the same choice moved, which
+ * is what actually happened — and it is the only way the control can show
+ * *which way* the selection went. It is measured rather than assumed: the track
+ * reports its width through `onLayout` and the thumb is laid out from it, so
+ * the maths holds for two options or four and for whatever a translated label
+ * does to the row.
  */
 export function Segmented<T extends string>({
   options,
@@ -38,11 +48,92 @@ export function Segmented<T extends string>({
 }: SegmentedProps<T>) {
   const { colors } = useTheme();
 
+  // RN Web has no native animated module; asking for one only earns a warning.
+  const useNativeDriver = Platform.OS !== 'web';
+
+  const [trackWidth, setTrackWidth] = useState(0);
+  const selectedIndex = options.findIndex((option) => option.value === value);
+  const hasSelection = selectedIndex >= 0;
+
+  /*
+    The track pads itself and puts one gap between segments, so the thumb's
+    width is what is left over shared out — not `trackWidth / count`, which
+    would drift a segment's worth by the last option.
+  */
+  const inner = Math.max(0, trackWidth - Spacing.xs * 2);
+  const segmentWidth =
+    options.length > 0 ? (inner - Spacing.xs * (options.length - 1)) / options.length : 0;
+
+  const offset = useRef(new Animated.Value(0)).current;
+  const presence = useRef(new Animated.Value(0)).current;
+  /**
+   * Whether the thumb has ever been put somewhere. The first measured layout
+   * has to *place* it — animating from x=0 would slide it in from the track's
+   * left edge every time the screen mounts already holding a selection.
+   */
+  const isPlaced = useRef(false);
+
+  useEffect(() => {
+    if (!hasSelection || segmentWidth <= 0) {
+      // Fades out where it stands rather than sliding to a zero index, which
+      // would animate the thumb to the first option on its way to nowhere.
+      Animated.timing(presence, {
+        toValue: 0,
+        duration: Motion.duration.fast,
+        useNativeDriver,
+      }).start();
+
+      return;
+    }
+
+    const target = Spacing.xs + selectedIndex * (segmentWidth + Spacing.xs);
+
+    if (!isPlaced.current) {
+      isPlaced.current = true;
+      offset.setValue(target);
+    }
+
+    Animated.parallel([
+      Animated.timing(presence, {
+        toValue: 1,
+        duration: Motion.duration.fast,
+        useNativeDriver,
+      }),
+      Animated.timing(offset, {
+        toValue: target,
+        duration: Motion.duration.base,
+        // Out-cubic: leaves quickly, arrives softly. A spring here overshoots
+        // past the segment it is meant to be marking.
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver,
+      }),
+    ]).start();
+  }, [hasSelection, offset, presence, segmentWidth, selectedIndex, useNativeDriver]);
+
   return (
     <View
       accessibilityRole="radiogroup"
       accessibilityLabel={label}
+      onLayout={(event) => setTrackWidth(event.nativeEvent.layout.width)}
       style={[styles.track, { backgroundColor: colors.surfaceMuted }, disabled && styles.dimmed]}>
+      {/* Behind the labels and deaf to touch: the segments above own every
+          press, exactly as they did when each drew its own background. */}
+      {segmentWidth > 0 ? (
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            styles.thumb,
+            {
+              backgroundColor: colors.surface,
+              borderColor: colors.border,
+              width: segmentWidth,
+              opacity: presence,
+              transform: [{ translateX: offset }],
+            },
+          ]}
+        />
+      ) : null}
+
       {options.map((option) => {
         const isSelected = option.value === value;
 
@@ -58,10 +149,7 @@ export function Segmented<T extends string>({
             // A segment is already inset in its track; dipping it as far as a
             // full-width button would pull it off its own edges.
             scaleTo={0.94}
-            style={[
-              styles.segment,
-              isSelected && { backgroundColor: colors.surface, borderColor: colors.border },
-            ]}>
+            style={styles.segment}>
             <Text
               variant={isSelected ? 'captionStrong' : 'caption'}
               color={isSelected ? 'text' : 'textSecondary'}>
@@ -88,8 +176,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingVertical: Spacing.sm,
     borderRadius: Radius.sm,
-    // Transparent until selected, so the segment does not resize on selection.
+  },
+  thumb: {
+    position: 'absolute',
+    top: Spacing.xs,
+    bottom: Spacing.xs,
+    borderRadius: Radius.sm,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'transparent',
   },
 });

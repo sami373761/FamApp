@@ -701,6 +701,10 @@ export default function ChatScreen() {
               ? truncate(actionMessage.content.trim(), ACTION_EXCERPT_LENGTH)
               : undefined
         }
+        // The panel runs a menu, a message menu, a task form and a photo
+        // confirmation through one frame; naming which it is holding is what
+        // makes the change read as one surface changing its mind.
+        contentKey={sheet}
         onClose={closeSheet}>
         {sheet === 'actions' ? (
           <ChatActionsList

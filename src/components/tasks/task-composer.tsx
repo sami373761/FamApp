@@ -32,8 +32,16 @@
  */
 
 import { Ionicons } from '@expo/vector-icons';
-import { useRef, useState, type ReactNode } from 'react';
-import { ScrollView, StyleSheet, useWindowDimensions, View } from 'react-native';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import {
+  Animated,
+  Easing,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  useWindowDimensions,
+  View,
+} from 'react-native';
 
 import {
   Avatar,
@@ -53,7 +61,7 @@ import { useTheme } from '@/hooks/use-theme';
 import { useTranslation } from '@/hooks/use-translation';
 import { MAX_MESSAGE_LENGTH } from '@/services/chatService';
 import { expiryFor, MAX_TASK_TITLE_LENGTH } from '@/services/taskService';
-import { Radius, Spacing } from '@/theme';
+import { Motion, Radius, Spacing } from '@/theme';
 
 /**
  * How much of the window the scrolling half of the form may take, and the floor
@@ -409,6 +417,24 @@ function DisclosureRow({
 }: DisclosureRowProps) {
   const { colors } = useTheme();
 
+  // RN Web has no native animated module; asking for one only earns a warning.
+  const useNativeDriver = Platform.OS !== 'web';
+  const turn = useRef(new Animated.Value(expanded ? 1 : 0)).current;
+
+  /*
+    One chevron that turns, rather than two glyphs swapped between frames. The
+    row is the only thing on screen that reports which section is open, so the
+    change is worth the 150ms it takes to be seen happening.
+  */
+  useEffect(() => {
+    Animated.timing(turn, {
+      toValue: expanded ? 1 : 0,
+      duration: Motion.duration.fast,
+      easing: Easing.out(Easing.quad),
+      useNativeDriver,
+    }).start();
+  }, [expanded, turn, useNativeDriver]);
+
   return (
     <View style={isLast ? undefined : [styles.divided, { borderBottomColor: colors.separator }]}>
       <PressableScale
@@ -439,15 +465,66 @@ function DisclosureRow({
           </Text>
         ) : null}
 
-        <Ionicons
-          name={expanded ? 'chevron-up' : 'chevron-down'}
-          size={16}
-          color={colors.textTertiary}
-        />
+        <Animated.View
+          style={{
+            transform: [
+              {
+                rotate: turn.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: ['0deg', '180deg'],
+                }),
+              },
+            ],
+          }}>
+          <Ionicons name="chevron-down" size={16} color={colors.textTertiary} />
+        </Animated.View>
       </PressableScale>
 
-      {expanded ? <View style={styles.panel}>{children}</View> : null}
+      {expanded ? <DisclosurePanel>{children}</DisclosurePanel> : null}
     </View>
+  );
+}
+
+/**
+ * The revealed half of a disclosure row.
+ *
+ * It fades and lifts into place rather than appearing whole. The *height* is
+ * deliberately not animated: the panel it sits in is already bounded by the
+ * window and re-measuring it every frame would fight the scroll view that
+ * yields to the keyboard. A fade over the layout change is what the eye reads
+ * as the section opening, and it cannot mis-measure anything.
+ */
+function DisclosurePanel({ children }: { children: ReactNode }) {
+  const useNativeDriver = Platform.OS !== 'web';
+  const enter = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.timing(enter, {
+      toValue: 1,
+      duration: Motion.duration.fast,
+      easing: Easing.out(Easing.quad),
+      useNativeDriver,
+    }).start();
+  }, [enter, useNativeDriver]);
+
+  return (
+    <Animated.View
+      style={[
+        styles.panel,
+        {
+          opacity: enter,
+          transform: [
+            {
+              translateY: enter.interpolate({
+                inputRange: [0, 1],
+                outputRange: [-Motion.shift, 0],
+              }),
+            },
+          ],
+        },
+      ]}>
+      {children}
+    </Animated.View>
   );
 }
 

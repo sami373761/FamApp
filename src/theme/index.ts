@@ -10,4 +10,5 @@ import '@/global.css';
 
 export { MemberColors, Palette, type ColorToken, type ThemeColors } from './colors';
 export { MaxContentWidth, Radius, Shadow, Spacing, TabBar } from './layout';
+export { Motion } from './motion';
 export { FontFamily, Typography, type TypographyVariant } from './typography';

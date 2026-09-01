@@ -1,10 +1,11 @@
 import { Ionicons } from '@expo/vector-icons';
-import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { ScrollView, StyleSheet, View } from 'react-native';
 
 import { Avatar } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
+import { PressableScale } from '@/components/ui/pressable-scale';
 import { Text } from '@/components/ui/text';
 import { isRecentlySynced, memberName, presenceLabel, relativeTime } from '@/data/format';
 import { formatCoordinates } from '@/data/geo';
@@ -58,14 +59,18 @@ export function MemberDrawer({
 
   return (
     <Card padded={false} style={styles.drawer}>
-      <Pressable
+      <PressableScale
         accessibilityRole="button"
         accessibilityLabel={expanded ? t('drawer.hide') : t('drawer.show')}
         accessibilityState={{ expanded }}
         onPress={onToggleExpanded}
+        feedback="tap"
+        // The grabber is a 5pt line in a wide strip; dipping the strip is what
+        // makes the press visible at all.
+        scaleTo={0.96}
         style={styles.handleArea}>
         <View style={[styles.grabber, { backgroundColor: colors.border }]} />
-      </Pressable>
+      </PressableScale>
 
       {selected ? (
         <View style={styles.peek}>
@@ -115,11 +120,13 @@ export function MemberDrawer({
             </View>
           </View>
 
-          <Pressable
+          <PressableScale
             accessibilityRole="button"
             accessibilityLabel={expanded ? t('drawer.hide') : t('drawer.show')}
             accessibilityState={{ expanded }}
             onPress={onToggleExpanded}
+            feedback="tap"
+            scaleTo={0.9}
             hitSlop={8}
             style={[styles.toggle, { backgroundColor: colors.surfaceMuted }]}>
             <Ionicons
@@ -127,7 +134,7 @@ export function MemberDrawer({
               size={18}
               color={colors.textSecondary}
             />
-          </Pressable>
+          </PressableScale>
         </View>
       ) : (
         <View style={styles.empty}>
@@ -155,7 +162,7 @@ export function MemberDrawer({
               const canFocus = member.location !== null;
 
               return (
-                <Pressable
+                <PressableScale
                   key={member.id}
                   accessibilityRole="button"
                   accessibilityState={{ selected: isFocused, disabled: !canFocus }}
@@ -166,14 +173,19 @@ export function MemberDrawer({
                   }
                   disabled={!canFocus}
                   onPress={() => onSelect(member.id)}
-                  style={({ pressed }) => [
+                  // Centring the camera on somebody is moving within the
+                  // roster, not committing to anything.
+                  feedback="select"
+                  highlightColor={colors.surfaceMuted}
+                  style={[
                     styles.row,
                     index < members.length - 1 && {
                       borderBottomWidth: StyleSheet.hairlineWidth,
                       borderBottomColor: colors.separator,
                     },
+                    // The focused row keeps its standing fill; the highlight
+                    // above is the transient one that answers the finger.
                     isFocused && { backgroundColor: colors.surfaceMuted },
-                    pressed && styles.pressed,
                   ]}>
                   <Avatar
                     initials={member.initials}
@@ -206,7 +218,7 @@ export function MemberDrawer({
                       color={isFocused ? colors.primary : colors.textTertiary}
                     />
                   ) : null}
-                </Pressable>
+                </PressableScale>
               );
             })}
           </ScrollView>
@@ -252,5 +264,4 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.md,
   },
   rowText: { flex: 1, gap: 2 },
-  pressed: { opacity: 0.8 },
 });

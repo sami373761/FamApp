@@ -21,7 +21,7 @@
 
 import { Ionicons } from '@expo/vector-icons';
 import { useState } from 'react';
-import { KeyboardAvoidingView, Platform, Pressable, StyleSheet, View } from 'react-native';
+import { KeyboardAvoidingView, Platform, StyleSheet, View } from 'react-native';
 
 import { CodeInput } from '@/components/family/code-input';
 import {
@@ -29,6 +29,7 @@ import {
   Button,
   Card,
   NavHeader,
+  PressableScale,
   Screen,
   Section,
   Segmented,
@@ -235,13 +236,15 @@ export default function AddFamilyScreen() {
 
               <View style={styles.swatches}>
                 {COLOR_CHOICES.map((color, index) => (
-                  <Pressable
+                  <PressableScale
                     key={color}
                     accessibilityRole="radio"
                     accessibilityState={{ selected: index === colorIndex, disabled: isSubmitting }}
                     accessibilityLabel={t('family.colorOption', { number: index + 1 })}
                     disabled={isSubmitting}
                     onPress={() => setColorIndex(index)}
+                    feedback="select"
+                    scaleTo={0.9}
                     style={[
                       styles.swatch,
                       { backgroundColor: color },
@@ -250,7 +253,7 @@ export default function AddFamilyScreen() {
                     {index === colorIndex ? (
                       <Ionicons name="checkmark" size={16} color="#FFFFFF" />
                     ) : null}
-                  </Pressable>
+                  </PressableScale>
                 ))}
               </View>
 

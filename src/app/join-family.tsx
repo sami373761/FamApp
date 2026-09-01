@@ -4,7 +4,6 @@ import { useState } from 'react';
 import {
   KeyboardAvoidingView,
   Platform,
-  Pressable,
   ScrollView,
   StyleSheet,
   TextInput,
@@ -12,7 +11,7 @@ import {
 } from 'react-native';
 
 import { CodeInput } from '@/components/family/code-input';
-import { Button, Card, NavHeader, Screen, Text } from '@/components/ui';
+import { Button, Card, NavHeader, PressableScale, Screen, Text } from '@/components/ui';
 import { useAuth } from '@/hooks/useAuth';
 import { useTheme } from '@/hooks/use-theme';
 import { useTranslation } from '@/hooks/use-translation';
@@ -123,19 +122,23 @@ export default function JoinFamilyScreen() {
             </Text>
             <View style={styles.swatches}>
               {COLOR_CHOICES.map((color, index) => (
-                <Pressable
+                <PressableScale
                   key={color}
                   accessibilityRole="radio"
                   accessibilityState={{ selected: index === colorIndex }}
                   accessibilityLabel={t('family.colorOption', { number: index + 1 })}
                   onPress={() => setColorIndex(index)}
+                  // Picking your identity colour is a move within a set, on a
+                  // circle too small for the standard dip to register.
+                  feedback="select"
+                  scaleTo={0.9}
                   style={[
                     styles.swatch,
                     { backgroundColor: color },
                     index === colorIndex && { borderColor: colors.text, borderWidth: 3 },
                   ]}>
                   {index === colorIndex ? <Ionicons name="checkmark" size={16} color="#FFFFFF" /> : null}
-                </Pressable>
+                </PressableScale>
               ))}
             </View>
           </View>
@@ -150,16 +153,18 @@ export default function JoinFamilyScreen() {
             </View>
           </Card>
 
-          <Pressable
+          <PressableScale
             style={styles.scanRow}
             accessibilityRole="button"
+            feedback="tap"
+            scaleTo={0.96}
             hitSlop={8}
             onPress={() => router.replace('/create-family')}>
             <Ionicons name="add-circle-outline" size={18} color={colors.accent} />
             <Text variant="captionStrong" color="accent">
               {t('joinFamily.createInstead')}
             </Text>
-          </Pressable>
+          </PressableScale>
         </ScrollView>
 
         <Button

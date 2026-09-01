@@ -25,10 +25,13 @@ export function Card({ children, onPress, style, padded = true }: CardProps) {
   if (onPress) {
     return (
       // A card is a surface, not a control: `tap` is the lightest thing the
-      // engine does, because a list of them would otherwise chatter.
+      // engine does, because a list of them would otherwise chatter — and the
+      // dip is softer than a button's for the same reason. The same 3% on
+      // something this wide is a visibly larger movement than it is on a chip.
       <PressableScale
         onPress={onPress}
         feedback="tap"
+        scaleTo={0.98}
         style={[styles.card, base, padded && styles.padded, style]}>
         {children}
       </PressableScale>

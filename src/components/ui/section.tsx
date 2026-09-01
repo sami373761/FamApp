@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
-import { Pressable, StyleSheet, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 
+import { PressableScale } from '@/components/ui/pressable-scale';
 import { Text } from '@/components/ui/text';
 import { Spacing } from '@/theme';
 
@@ -20,11 +21,18 @@ export function Section({ title, actionLabel, onActionPress, children }: Section
         <Text variant="heading">{title}</Text>
 
         {actionLabel ? (
-          <Pressable accessibilityRole="button" onPress={onActionPress} hitSlop={8}>
+          <PressableScale
+            accessibilityRole="button"
+            onPress={onActionPress}
+            feedback="tap"
+            // A short label needs a firmer dip than a full-width row to read as
+            // one at all.
+            scaleTo={0.94}
+            hitSlop={8}>
             <Text variant="captionStrong" color="accent">
               {actionLabel}
             </Text>
-          </Pressable>
+          </PressableScale>
         ) : null}
       </View>
 

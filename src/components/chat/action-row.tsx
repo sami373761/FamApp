@@ -6,16 +6,18 @@
  * whatever a row looks like when it is unavailable, busy or being sold, it
  * looks the same wherever the sheet was opened from.
  *
- * It stays a plain `Pressable` with a pressed fill rather than
- * `PressableScale`: a full-width row inside a panel that has just slid up reads
- * better held still, and the fill is the same recess `ListRow` uses for the
- * same gesture elsewhere.
+ * It takes the row treatment `ListRow` takes — the same recess, faded in rather
+ * than switched on, and a dip small enough not to detach the row from the panel
+ * it sits in. Held perfectly still it was the one list in the app that did not
+ * answer a finger; matching `ListRow` is what stops a menu row and a settings
+ * row feeling like different apps.
  */
 
 import { Ionicons } from '@expo/vector-icons';
-import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, StyleSheet, View } from 'react-native';
 
 import { Badge } from '@/components/ui/badge';
+import { PressableScale } from '@/components/ui/pressable-scale';
 import { Text } from '@/components/ui/text';
 import { useTheme } from '@/hooks/use-theme';
 import { Radius, Spacing } from '@/theme';
@@ -52,18 +54,18 @@ export function ActionRow({
   const accent = tone === 'danger' ? colors.danger : colors.primary;
 
   return (
-    <Pressable
+    <PressableScale
       accessibilityRole="button"
       accessibilityState={{ disabled: inert, busy }}
       accessibilityLabel={label}
       accessibilityHint={description}
       disabled={inert}
       onPress={onPress}
-      style={({ pressed }) => [
-        styles.row,
-        { backgroundColor: pressed ? colors.surfaceMuted : 'transparent' },
-        disabled && styles.disabled,
-      ]}>
+      // A destructive row is felt as one before it is confirmed.
+      feedback={tone === 'danger' ? 'warning' : 'tap'}
+      highlightColor={colors.surfaceMuted}
+      highlightRadius={Radius.md}
+      style={[styles.row, disabled && styles.disabled]}>
       <View style={[styles.icon, { backgroundColor: colors.surfaceMuted }]}>
         <Ionicons name={icon} size={20} color={disabled ? colors.textTertiary : accent} />
       </View>
@@ -87,7 +89,7 @@ export function ActionRow({
       ) : disabled ? null : (
         <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
       )}
-    </Pressable>
+    </PressableScale>
   );
 }
 

@@ -1,9 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
-import { KeyboardAvoidingView, Platform, Pressable, StyleSheet, View } from 'react-native';
+import { KeyboardAvoidingView, Platform, StyleSheet, View } from 'react-native';
 
-import { Button, NavHeader, Screen, Text, TextField } from '@/components/ui';
+import { Button, NavHeader, PressableScale, Screen, Text, TextField } from '@/components/ui';
 import { useAuth } from '@/hooks/useAuth';
 import { useIsMounted } from '@/hooks/use-safe-back';
 import { useTheme } from '@/hooks/use-theme';
@@ -128,8 +128,10 @@ export default function SignInScreen() {
           />
         </View>
 
-        <Pressable
+        <PressableScale
           accessibilityRole="button"
+          feedback="tap"
+          scaleTo={0.96}
           hitSlop={8}
           onPress={() => router.replace('/sign-up')}
           style={styles.footer}>
@@ -139,7 +141,7 @@ export default function SignInScreen() {
           <Text variant="captionStrong" color="accent">
             {t('signIn.createAccount')}
           </Text>
-        </Pressable>
+        </PressableScale>
       </KeyboardAvoidingView>
     </Screen>
   );

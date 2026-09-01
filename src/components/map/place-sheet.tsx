@@ -16,10 +16,11 @@
 
 import { Ionicons } from '@expo/vector-icons';
 import { useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { ScrollView, StyleSheet, View } from 'react-native';
 
 import { PLACE_ICONS } from '@/components/map/place-pin';
 import { Button } from '@/components/ui/button';
+import { PressableScale } from '@/components/ui/pressable-scale';
 import { Sheet } from '@/components/ui/sheet';
 import { Text } from '@/components/ui/text';
 import { TextField } from '@/components/ui/text-field';
@@ -106,7 +107,13 @@ export function PlaceSheet({
           : t('places.detailsTitle');
 
   return (
-    <Sheet visible={state.mode !== 'none'} title={title} onClose={onClose}>
+    <Sheet
+      visible={state.mode !== 'none'}
+      title={title}
+      // One panel, five faces. Naming the current one lets the sheet settle the
+      // incoming face in rather than swapping it between two frames.
+      contentKey={`${state.mode}:${state.mode === 'form' ? (state.placeId ?? 'new') : ''}`}
+      onClose={onClose}>
       {/*
         Keyed on the mode *and* the place, so switching between them remounts
         the child: the form holds its draft in local state and has no reset of
@@ -585,19 +592,24 @@ function CategoryChip({ category, label, selected, disabled, onPress }: Category
   const { colors } = useTheme();
 
   return (
-    <Pressable
+    <PressableScale
       accessibilityRole="radio"
       accessibilityState={{ selected, disabled }}
       accessibilityLabel={label}
       disabled={disabled}
       onPress={onPress}
-      style={({ pressed }) => [
+      // Picking within a set, the same feedback the task composer's own
+      // assignee chips take.
+      feedback="select"
+      // A chip is small enough that a full-button dip overshoots it.
+      scaleTo={0.94}
+      style={[
         styles.chip,
         {
           backgroundColor: selected ? colors.primarySoft : colors.surface,
           borderColor: selected ? colors.primary : colors.border,
         },
-        (pressed || disabled) && styles.dimmed,
+        disabled && styles.dimmed,
       ]}>
       <Ionicons
         name={PLACE_ICONS[category]}
@@ -607,7 +619,7 @@ function CategoryChip({ category, label, selected, disabled, onPress }: Category
       <Text variant="captionStrong" color={selected ? 'primary' : 'textSecondary'}>
         {label}
       </Text>
-    </Pressable>
+    </PressableScale>
   );
 }
 

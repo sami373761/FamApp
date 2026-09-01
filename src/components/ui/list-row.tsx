@@ -1,7 +1,8 @@
 import { Ionicons } from '@expo/vector-icons';
-import { Pressable, StyleSheet, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 
 import { Badge, type BadgeTone } from '@/components/ui/badge';
+import { PressableScale } from '@/components/ui/pressable-scale';
 import { Text } from '@/components/ui/text';
 import { useTheme } from '@/hooks/use-theme';
 import { Radius, Spacing, type ColorToken } from '@/theme';
@@ -52,16 +53,20 @@ export function ListRow({
   const iconColor = tone === 'danger' ? colors.danger : colors.textSecondary;
 
   return (
-    <Pressable
+    <PressableScale
       accessibilityRole="button"
       accessibilityState={{ disabled }}
       disabled={disabled}
       onPress={onPress}
-      style={({ pressed }) => [
-        styles.row,
-        disabled && styles.dimmed,
-        pressed && !disabled && { backgroundColor: colors.surfaceMuted },
-      ]}>
+      feedback="tap"
+      /*
+        The row treatment: the recess it always had, now fading rather than
+        switching, and a dip small enough that the divider inside it does not
+        visibly move. A settings row is not a button and must not answer like
+        one — see `PressableScale`.
+      */
+      highlightColor={colors.surfaceMuted}
+      style={[styles.row, disabled && styles.dimmed]}>
       <View style={[styles.iconWrap, { backgroundColor: colors.surfaceMuted }]}>
         <Ionicons name={icon} size={18} color={iconColor} />
       </View>
@@ -94,7 +99,7 @@ export function ListRow({
           <Ionicons name="chevron-forward" size={16} color={colors.textTertiary} />
         ) : null}
       </View>
-    </Pressable>
+    </PressableScale>
   );
 }
 

@@ -1,9 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
-import { KeyboardAvoidingView, Platform, Pressable, StyleSheet, TextInput, View } from 'react-native';
+import { KeyboardAvoidingView, Platform, StyleSheet, TextInput, View } from 'react-native';
 
-import { Button, Card, NavHeader, Screen, Text } from '@/components/ui';
+import { Button, Card, NavHeader, PressableScale, Screen, Text } from '@/components/ui';
 import { useAuth } from '@/hooks/useAuth';
 import { usePreferences } from '@/hooks/usePreferences';
 import { useTheme } from '@/hooks/use-theme';
@@ -131,19 +131,24 @@ export default function CreateFamilyScreen() {
               </Text>
               <View style={styles.swatches}>
                 {COLOR_CHOICES.map((color, index) => (
-                  <Pressable
+                  <PressableScale
                     key={color}
                     accessibilityRole="radio"
                     accessibilityState={{ selected: index === colorIndex }}
                     accessibilityLabel={t('family.colorOption', { number: index + 1 })}
                     onPress={() => setColorIndex(index)}
+                    // Picking your identity colour is a move within a set.
+                    feedback="select"
+                    // A 40pt circle: the standard dip is lost on something this
+                    // small, so it takes the chip's.
+                    scaleTo={0.9}
                     style={[
                       styles.swatch,
                       { backgroundColor: color },
                       index === colorIndex && { borderColor: colors.text, borderWidth: 3 },
                     ]}>
                     {index === colorIndex ? <Ionicons name="checkmark" size={16} color="#FFFFFF" /> : null}
-                  </Pressable>
+                  </PressableScale>
                 ))}
               </View>
             </View>
@@ -163,16 +168,18 @@ export default function CreateFamilyScreen() {
             </Text>
           </Card>
 
-          <Pressable
+          <PressableScale
             style={styles.altRow}
             accessibilityRole="button"
+            feedback="tap"
+            scaleTo={0.96}
             hitSlop={8}
             onPress={() => router.replace('/join-family')}>
             <Ionicons name="key-outline" size={18} color={colors.accent} />
             <Text variant="captionStrong" color="accent">
               {t('createFamily.haveCode')}
             </Text>
-          </Pressable>
+          </PressableScale>
 
           {/*
             Ranked below the other two on purpose — secondary text rather than
@@ -181,9 +188,11 @@ export default function CreateFamilyScreen() {
             guard, the same way creating a family does. Nothing is written to
             the account, so this stays reversible from Profile.
           */}
-          <Pressable
+          <PressableScale
             style={styles.altRow}
             accessibilityRole="button"
+            feedback="tap"
+            scaleTo={0.96}
             hitSlop={8}
             disabled={isCreating || !user}
             onPress={() => user && setPreference('familySetupSkippedFor', user.id)}>
@@ -191,7 +200,7 @@ export default function CreateFamilyScreen() {
             <Text variant="captionStrong" color="textSecondary">
               {t('createFamily.skip')}
             </Text>
-          </Pressable>
+          </PressableScale>
         </View>
 
         <Button

@@ -1,5 +1,12 @@
 import type { ReactNode } from 'react';
-import { Animated, Pressable, type PressableProps, type StyleProp, type ViewStyle } from 'react-native';
+import {
+  Animated,
+  Pressable,
+  StyleSheet,
+  type PressableProps,
+  type StyleProp,
+  type ViewStyle,
+} from 'react-native';
 
 import { useHaptics, type HapticFeedback } from '@/hooks/use-haptics';
 import { usePressScale } from '@/hooks/use-press-scale';
@@ -14,6 +21,9 @@ import { usePressScale } from '@/hooks/use-press-scale';
  */
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
+/** The dip a full-width row takes: present to the thumb, invisible to the eye. */
+const ROW_SCALE = 0.99;
+
 type PressableScaleProps = Omit<PressableProps, 'style' | 'children'> & {
   /** Plain styles only — no `({ pressed }) => …`; see the note above. */
   style?: StyleProp<ViewStyle>;
@@ -21,6 +31,16 @@ type PressableScaleProps = Omit<PressableProps, 'style' | 'children'> & {
   scaleTo?: number;
   /** What this press should feel like. `'none'` for a surface pressed in bulk. */
   feedback?: HapticFeedback | 'none';
+  /**
+   * Fades a recess in behind the content while the finger is down — the row
+   * treatment. Supplying it also softens the dip and drops the dimming, so a
+   * settings row answers with the fill it always used rather than flinching
+   * like a button. Pass `colors.surfaceMuted`; anything raised is the wrong
+   * direction on a white canvas.
+   */
+  highlightColor?: string;
+  /** Rounds the highlight to match the row's own corners. */
+  highlightRadius?: number;
   children?: ReactNode;
 };
 
@@ -37,13 +57,16 @@ export function PressableScale({
   style,
   scaleTo,
   feedback = 'tap',
+  highlightColor,
+  highlightRadius = 0,
   onPress,
   onPressIn,
   onPressOut,
   children,
   ...rest
 }: PressableScaleProps) {
-  const motion = usePressScale(scaleTo);
+  const isRow = highlightColor !== undefined;
+  const motion = usePressScale(scaleTo ?? (isRow ? ROW_SCALE : undefined), isRow ? 1 : undefined);
   const haptic = useHaptics();
 
   return (
@@ -64,6 +87,25 @@ export function PressableScale({
         if (feedback !== 'none') haptic(feedback);
         onPress?.(event);
       }}>
+      {/*
+        Behind the content rather than over it: an overlay would wash out the
+        label it is meant to be under. It takes no layout because it is
+        absolutely positioned, so a row's flex children are unaffected.
+      */}
+      {isRow ? (
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            StyleSheet.absoluteFillObject,
+            {
+              backgroundColor: highlightColor,
+              borderRadius: highlightRadius,
+              opacity: motion.highlight,
+            },
+          ]}
+        />
+      ) : null}
+
       {children}
     </AnimatedPressable>
   );

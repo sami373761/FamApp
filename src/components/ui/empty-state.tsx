@@ -24,7 +24,11 @@ type EmptyStateProps = {
  *
  * Every list in the app can legitimately be empty — a family of one has no
  * messages, no tasks and no shared locations — so this is a first-class state,
- * not an edge case.
+ * not an edge case. It is typeset like one: the title takes the same weight a
+ * section heading would and the full text colour, because "No tasks yet" is the
+ * screen's answer rather than a footnote about the absence of one. The
+ * description stays tertiary and is held to a readable measure, so the block
+ * reads as a centred column instead of a paragraph stretched across a tablet.
  */
 export function EmptyState({
   icon,
@@ -45,16 +49,16 @@ export function EmptyState({
         {loading ? (
           <ActivityIndicator color={colors.primary} />
         ) : (
-          <Ionicons name={icon} size={22} color={markColor} />
+          <Ionicons name={icon} size={24} color={markColor} />
         )}
       </View>
 
-      <Text variant="bodyStrong" color="textSecondary" center>
+      <Text variant="subheading" center>
         {title}
       </Text>
 
       {description ? (
-        <Text variant="caption" color="textTertiary" center>
+        <Text variant="caption" color="textTertiary" center style={styles.description}>
           {description}
         </Text>
       ) : null}
@@ -65,14 +69,21 @@ export function EmptyState({
 }
 
 const styles = StyleSheet.create({
-  card: { paddingVertical: Spacing.xl },
-  body: { alignItems: 'center', gap: Spacing.sm, paddingHorizontal: Spacing.lg },
+  // An empty block needs room around it or it reads as a failed row rather than
+  // a deliberate state.
+  card: { paddingVertical: Spacing.xxl },
+  body: { alignItems: 'center', gap: Spacing.xs, paddingHorizontal: Spacing.lg },
   well: {
-    width: 48,
-    height: 48,
+    width: 56,
+    height: 56,
     borderRadius: Radius.pill,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: Spacing.xs,
+    // Groups the mark with the title it introduces, rather than spacing all
+    // three elements evenly and leaving the eye nothing to start on.
+    marginBottom: Spacing.md,
   },
+  // Roughly forty characters a line — the measure a centred column stays
+  // readable at, and what stops one long sentence spanning a tablet.
+  description: { maxWidth: 320 },
 });

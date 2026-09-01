@@ -2,6 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { ActivityIndicator, StyleSheet, Switch, View } from 'react-native';
 
 import { Text } from '@/components/ui/text';
+import { useHaptics } from '@/hooks/use-haptics';
 import { useTheme } from '@/hooks/use-theme';
 import { Radius, Spacing } from '@/theme';
 
@@ -37,6 +38,7 @@ export function SwitchRow({
   isLast = false,
 }: SwitchRowProps) {
   const { colors } = useTheme();
+  const haptic = useHaptics();
 
   return (
     <View style={[styles.row, disabled && styles.dimmed]}>
@@ -66,7 +68,18 @@ export function SwitchRow({
         ) : (
           <Switch
             value={value}
-            onValueChange={onValueChange}
+            /*
+              `select` rather than `tap`: a switch is a move between the two
+              states of a set, which is the same thing `Segmented` does and
+              the pattern iOS itself uses for a toggle. The feedback fires
+              here rather than at each screen so every switch in the app
+              answers alike — and it fires on the gesture, not on the write
+              that follows, because the write may fail and revert.
+            */
+            onValueChange={(next) => {
+              haptic('select');
+              onValueChange(next);
+            }}
             disabled={disabled}
             accessibilityLabel={label}
             trackColor={{ false: colors.surfaceMuted, true: colors.primary }}

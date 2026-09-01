@@ -9,10 +9,11 @@
  */
 
 import { Ionicons } from '@expo/vector-icons';
-import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, StyleSheet, View } from 'react-native';
 
 import { Avatar } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
+import { PressableScale } from '@/components/ui/pressable-scale';
 import { Text } from '@/components/ui/text';
 import { memberName, monthYear, roleLabel } from '@/data/format';
 import type { FamilyMember } from '@/data/types';
@@ -86,24 +87,28 @@ export function MemberRow({
         </View>
 
         {onRemove ? (
-          <Pressable
+          <PressableScale
             accessibilityRole="button"
             accessibilityLabel={t('memberRow.removeA11y', { name: memberName(i18n, member) })}
             accessibilityState={{ disabled: disabled || isRemoving, busy: isRemoving }}
             disabled={disabled || isRemoving}
             onPress={onRemove}
+            // It opens the confirmation rather than removing anyone, so it is a
+            // `tap`; `warning` belongs on the dialog's own confirm button.
+            feedback="tap"
+            scaleTo={0.9}
             hitSlop={8}
-            style={({ pressed }) => [
+            style={[
               styles.remove,
               { backgroundColor: colors.dangerSoft },
-              (pressed || disabled) && styles.pressed,
+              disabled && styles.dimmed,
             ]}>
             {isRemoving ? (
               <ActivityIndicator color={colors.danger} size="small" />
             ) : (
               <Ionicons name="person-remove-outline" size={16} color={colors.danger} />
             )}
-          </Pressable>
+          </PressableScale>
         ) : null}
       </View>
     </View>
@@ -132,5 +137,5 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  pressed: { opacity: 0.6 },
+  dimmed: { opacity: 0.4 },
 });

@@ -15,6 +15,23 @@ export const Spacing = {
   xxxl: 48,
 } as const;
 
+/**
+ * Corner radii, and they are a hierarchy rather than four sizes to pick from.
+ * How far a surface is from the page decides which it takes:
+ *
+ * | token | what wears it |
+ * | --- | --- |
+ * | `sm`  | a well inside something else — an icon tile, a segment's thumb |
+ * | `md`  | a control: a button, a field, a menu row |
+ * | `lg`  | a card — the grouped block that sits on the page |
+ * | `xl`  | a surface that floats *above* the page: a sheet, a dialog, the map
+ *           drawer, and the two washed banners that head a tab |
+ * | `pill`| anything whose shape is its meaning: an avatar, a badge, a FAB |
+ *
+ * A dialog is not a card with a bigger corner; it is further away, and the
+ * corner is how the eye is told. Reach for the row that matches the surface
+ * before adding a value.
+ */
 export const Radius = {
   sm: 8,
   md: 12,

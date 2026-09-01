@@ -244,7 +244,12 @@ export default function ProfileScreen() {
               { label: t('profile.statTasksDone'), value: `${completedCount}` },
             ].map((stat, index, all) => (
               <View key={stat.label} style={styles.stat}>
-                <Text variant="captionStrong" numberOfLines={1}>
+                {/*
+                  The value carries the weight, not the label under it: three
+                  captions of the same size made the row read as six equal
+                  lines rather than three answers with their questions.
+                */}
+                <Text variant="subheading" numberOfLines={1}>
                   {stat.value}
                 </Text>
                 <Text variant="label" color="textTertiary">
@@ -486,9 +491,9 @@ const styles = StyleSheet.create({
     marginTop: Spacing.md,
   },
   identity: { alignItems: 'center', gap: Spacing.sm },
-  statsCard: { flexDirection: 'row', marginTop: Spacing.xl },
-  stat: { flex: 1, alignItems: 'center', gap: 2 },
-  statDivider: { position: 'absolute', right: 0, top: 4, bottom: 4, width: StyleSheet.hairlineWidth },
+  statsCard: { flexDirection: 'row', paddingVertical: Spacing.lg, marginTop: Spacing.xl },
+  stat: { flex: 1, alignItems: 'center', gap: Spacing.xs, paddingHorizontal: Spacing.sm },
+  statDivider: { position: 'absolute', right: 0, top: 2, bottom: 2, width: StyleSheet.hairlineWidth },
   codeCard: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, marginTop: Spacing.md },
   codeText: { flex: 1, gap: 2 },
   codePill: {

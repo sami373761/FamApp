@@ -1,11 +1,17 @@
 import { Ionicons } from '@expo/vector-icons';
-import { Modal, Pressable, StyleSheet, View } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { Animated, Easing, Modal, Platform, Pressable, StyleSheet, View } from 'react-native';
 
 import { Button } from '@/components/ui/button';
 import { Text } from '@/components/ui/text';
+import { useHaptics } from '@/hooks/use-haptics';
 import { useTheme } from '@/hooks/use-theme';
 import { useTranslation } from '@/hooks/use-translation';
-import { Radius, Shadow, Spacing } from '@/theme';
+import { Motion, Radius, Shadow, Spacing } from '@/theme';
+
+/** How small the card starts. Nearer to 1 than a sheet's travel: the dialog is
+ *  already in the middle of the screen, so it only has to arrive, not travel. */
+const ENTER_SCALE = 0.94;
 
 type ConfirmDialogProps = {
   visible: boolean;
@@ -17,6 +23,13 @@ type ConfirmDialogProps = {
   cancelLabel?: string;
   /** `danger` for anything that destroys data. */
   tone?: 'primary' | 'danger';
+  /**
+   * The mark above the title. `danger` supplies its own, because a destructive
+   * question is worth recognising before it is read; a neutral one renders none
+   * unless the caller asks, since an icon on every dialog stops meaning
+   * anything on the one that needs it.
+   */
+  icon?: keyof typeof Ionicons.glyphMap;
   /** Keeps the dialog open with the action spinning while the write is in flight. */
   loading?: boolean;
   /** Rendered inside the dialog, so a failure does not close it. */
@@ -33,6 +46,12 @@ type ConfirmDialogProps = {
  * to be confirmable on every target the app runs on. Keeping the write inside
  * the dialog is what lets a failed confirmation report itself in place instead
  * of dismissing and leaving the caller to surface an error somewhere else.
+ *
+ * The entrance is driven here for the same reason `Sheet`'s is: `animationType`
+ * fades the whole window, so the card and its scrim arrive as one flat layer.
+ * Separating them lets the scrim fade where it is while the card scales up out
+ * of it, which is the difference between a dialog appearing and a dialog
+ * arriving.
  */
 export function ConfirmDialog({
   visible,
@@ -41,6 +60,7 @@ export function ConfirmDialog({
   confirmLabel,
   cancelLabel,
   tone = 'primary',
+  icon,
   loading = false,
   error = null,
   onConfirm,
@@ -48,29 +68,112 @@ export function ConfirmDialog({
 }: ConfirmDialogProps) {
   const { colors } = useTheme();
   const { t } = useTranslation();
+  const haptic = useHaptics();
+
+  const useNativeDriver = Platform.OS !== 'web';
+
+  // The Modal outlives `visible` by one animation; see `Sheet`.
+  const [mounted, setMounted] = useState(visible);
+  const progress = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (visible) {
+      setMounted(true);
+      Animated.timing(progress, {
+        toValue: 1,
+        duration: Motion.duration.base,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver,
+      }).start();
+
+      return;
+    }
+
+    Animated.timing(progress, {
+      toValue: 0,
+      duration: Motion.duration.exit,
+      easing: Easing.in(Easing.quad),
+      useNativeDriver,
+    }).start(({ finished }) => {
+      if (finished) setMounted(false);
+    });
+  }, [progress, useNativeDriver, visible]);
+
+  /*
+    A refusal is the one outcome the user is not expecting, and it lands inside
+    a dialog they are already looking at — so nothing else on screen moves to
+    announce it. The error pattern is what makes it register.
+  */
+  useEffect(() => {
+    if (error) haptic('error');
+  }, [error, haptic]);
+
+  const mark = icon ?? (tone === 'danger' ? 'alert-circle' : undefined);
 
   return (
     <Modal
-      visible={visible}
+      visible={mounted}
       transparent
-      animationType="fade"
+      animationType="none"
       // Android's hardware back, and Escape on web.
       onRequestClose={loading ? undefined : onCancel}>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={t('common.dismiss', { title })}
-        disabled={loading}
-        onPress={onCancel}
-        style={[styles.backdrop, { backgroundColor: colors.overlay }]}>
-        {/*
-          The card swallows presses so tapping inside it does not fall through
-          to the backdrop and dismiss the dialog.
-        */}
-        <Pressable
+      <View style={styles.backdrop}>
+        <Animated.View
+          style={[
+            StyleSheet.absoluteFillObject,
+            { backgroundColor: colors.overlay, opacity: progress },
+          ]}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={t('common.dismiss', { title })}
+            disabled={loading}
+            onPress={onCancel}
+            style={styles.flex}
+          />
+        </Animated.View>
+
+        {/* The backdrop is a sibling rather than this card's parent, so a press
+            landing here was never going to reach it. */}
+        <Animated.View
           accessibilityViewIsModal
-          onPress={() => undefined}
-          style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-          <Text variant="subheading">{title}</Text>
+          style={[
+            styles.card,
+            {
+              backgroundColor: colors.surface,
+              borderColor: colors.border,
+              opacity: progress,
+              transform: [
+                {
+                  /*
+                    A hair past its own size before it settles. The overshoot is
+                    shaped here rather than in the easing so `progress` stays a
+                    clean 0 → 1 — a back curve on the timing itself would push
+                    the opacity above 1 as well, which is a clamp waiting to be
+                    forgotten.
+                  */
+                  scale: progress.interpolate({
+                    inputRange: [0, 0.7, 1],
+                    outputRange: [ENTER_SCALE, 1.012, 1],
+                  }),
+                },
+              ],
+            },
+          ]}>
+          {mark ? (
+            <View
+              style={[
+                styles.mark,
+                { backgroundColor: tone === 'danger' ? colors.dangerSoft : colors.primarySoft },
+              ]}>
+              <Ionicons
+                name={mark}
+                size={22}
+                color={tone === 'danger' ? colors.danger : colors.primary}
+              />
+            </View>
+          ) : null}
+
+          <Text variant="heading">{title}</Text>
 
           <Text variant="body" color="textSecondary">
             {message}
@@ -103,8 +206,8 @@ export function ConfirmDialog({
               style={styles.flex}
             />
           </View>
-        </Pressable>
-      </Pressable>
+        </Animated.View>
+      </View>
     </Modal>
   );
 }
@@ -122,9 +225,20 @@ const styles = StyleSheet.create({
     maxWidth: 420,
     gap: Spacing.md,
     padding: Spacing.xl,
-    borderRadius: Radius.lg,
+    // One step up from a card: a dialog sits above everything else on screen
+    // and its corner should say so.
+    borderRadius: Radius.xl,
     borderWidth: StyleSheet.hairlineWidth,
     ...Shadow.floating,
+  },
+  mark: {
+    width: 44,
+    height: 44,
+    borderRadius: Radius.pill,
+    alignItems: 'center',
+    justifyContent: 'center',
+    // Sits a little clear of the title it introduces.
+    marginBottom: Spacing.xs,
   },
   error: {
     flexDirection: 'row',
