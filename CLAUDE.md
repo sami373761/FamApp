@@ -928,20 +928,32 @@ thing that decides. The plan picks the window server-side (annual → the 7-day 
 promises, monthly → one month), and a second purchase *extends* an existing grant rather than
 replacing it.
 
-**Two benefits are enforced now; the other three are still tier copy.** Saved places is the
+**Three benefits are enforced now; the other two are still tier copy.** Saved places is the
 ceiling this split first moved — 2 per family free, 10 on Gold, in
 `private.check_saved_place_limit()`. The second is the saved-place arrival/departure push, which
 stopped being copy when `20260830100000_geofence_push_triggers.sql` gave it an event to hang off:
 `private.notify_on_geofence()` returns early unless `private.is_family_premium()` says yes, so the
-gate is the database's rather than the client's — see Geofence pushes below. The member trigger
-still caps every family at 10 whatever they pay, the task trigger counts 20 active per *family*
-rather than per member, and chat photos are built but gated in the client alone. Making any of
-those real means the same narrowed trigger reading `private.is_family_premium()`, not a copy
-change.
+gate is the database's rather than the client's — see Geofence pushes below. The third is the
+member cap: `20260901120000_tiered_member_limit.sql` rewrites
+`private.enforce_family_member_limit()` to take `least(families.max_members, 10 if Gold else 5)`,
+so `max_members` is now the schema's hard bound rather than the operative ceiling. The premium read
+happens *after* the existing `for update` on the families row, so the cap cannot move underneath
+the count two concurrent joiners are racing on. It fires on joining only — INSERT, or an UPDATE
+that actually changes `family_id` — so a lapsed grant never ejects anybody, exactly as the
+saved-place ceiling is INSERT-only; the visible cost is that such a family reports "This family is
+full (10 of 5 members)" on the next join. The exception *sentence* is unchanged because
+`familyService.toServiceError` matches `/full/i` on P0001 to produce `FAMILY_FULL`; the **hint** is
+what branches by tier, offering the upgrade to a free family and not to a Gold one. `memberLimitFor()`
+in `src/data/premium.ts` is the client half, folded into `FamilyContext`'s `memberLimit` beside
+`isPremium` and read by both counters (Profile's row, the Members screen's line) in place of
+`family.maxMembers` — the same client-explains / server-decides split `placeLimitFor` has.
+The task trigger still counts 20 active per *family* rather than per member, and chat photos are
+built but gated in the client alone. Making either real means the same narrowed trigger reading
+`private.is_family_premium()`, not a copy change.
 
 | Benefit | Free | Gold | Enforced? |
 | --- | --- | --- | --- |
-| Family members | 5 | 10 | no — trigger caps all at 10 |
+| Family members | 5 | 10 | **yes** — `enforce_family_member_limit()` |
 | Saved places **per family** | 2 | 10 | **yes** — `check_saved_place_limit()` |
 | Group chat photos | text only | photo sharing | no — **client-side only** |
 | Active tasks **per member** | 2 | 10 | no — 20 per family |
@@ -1075,7 +1087,7 @@ calls `realtime.setAuth`.
 
 ## Backend (Supabase)
 
-`supabase/` holds thirteen migrations, two Edge Functions, `templates/confirmation.html` and a README
+`supabase/` holds fourteen migrations, two Edge Functions, `templates/confirmation.html` and a README
 covering setup. The **migrations** are applied to the live project — treat them as history and
 add a new one rather than editing an applied file. That includes
 `20260825140000_family_premium_tier.sql`: it is pushed, `db advisors --type security`
@@ -1153,7 +1165,7 @@ union per service, both of which include `NOT_AUTHENTICATED | OFFLINE | UNKNOWN`
 `result.ts`. `error.message` is safe to render; the database's own messages ("This family is
 full (10 of 10 members)") are already written for humans and are passed through deliberately.
 
-Business rules live in triggers, not application code: 10 members per family, 20 active tasks,
+Business rules live in triggers, not application code: 5 members per family (10 on Gold), 20 active tasks,
 500-char messages, 10-day image / 30-day text retention via `pg_cron`. Don't reimplement them
 client-side; surface the error.
 

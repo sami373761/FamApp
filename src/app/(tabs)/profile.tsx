@@ -61,6 +61,7 @@ export default function ProfileScreen() {
   const {
     family,
     isPremium,
+    memberLimit,
     members,
     tasks,
     currentMember,
@@ -331,8 +332,10 @@ export default function ProfileScreen() {
                   : isAdmin
                     ? family
                       ? t('profile.manageMembersCount', {
+                          // The tier's ceiling rather than `family.maxMembers`,
+                          // which is 10 on every row — see FamilyContext.
                           count: members.length,
-                          max: family.maxMembers,
+                          max: memberLimit,
                         })
                       : t('profile.manageMembersCountOnly', { count: members.length })
                     : t('profile.manageMembersNotAdmin')

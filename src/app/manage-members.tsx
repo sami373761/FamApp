@@ -39,6 +39,7 @@ export default function ManageMembersScreen() {
   const haptic = useHaptics();
   const {
     family,
+    memberLimit,
     members,
     currentMember,
     isLoading,
@@ -120,8 +121,12 @@ export default function ManageMembersScreen() {
             <Text variant="body" color="textSecondary">
               {family
                 ? t('manageMembers.placesUsed', {
+                    // `memberLimit`, not `family.maxMembers`: the column is the
+                    // schema's hard bound and reads 10 for everyone, while the
+                    // trigger admits 5 to a free family. A denominator the
+                    // database disagrees with is worse than none.
                     used: members.length,
-                    max: family.maxMembers,
+                    max: memberLimit,
                   })
                 : t('manageMembers.memberCount', { count: members.length })}{' '}
               {isAdmin ? t('manageMembers.adminHint') : t('manageMembers.memberHint')}

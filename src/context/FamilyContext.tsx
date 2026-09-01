@@ -15,7 +15,7 @@
 import { createContext, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import { presenceFrom } from '@/data/format';
-import { isPremiumActive } from '@/data/premium';
+import { isPremiumActive, memberLimitFor } from '@/data/premium';
 import type {
   ChatMessage,
   Family,
@@ -89,6 +89,21 @@ export type FamilyContextValue = {
    * False with no family: a solo user has no row to carry a subscription.
    */
   isPremium: boolean;
+  /**
+   * How many members this family may hold — 5 free, 10 on Gold, and never above
+   * the row's own `max_members`.
+   *
+   * Derived beside `isPremium` for the same reason it is: the ceiling moves the
+   * moment a grant lapses, so a screen holding the number it read at load time
+   * would keep offering room the trigger has since taken away. Both counters —
+   * Profile's row and the Members screen's line — read this one answer rather
+   * than `family.maxMembers`, which is the schema's hard bound and says nothing
+   * about the tier.
+   *
+   * `GOLD_MEMBER_LIMIT` with no family: there is no row to be capped, and a
+   * solo user is not shown a count anywhere.
+   */
+  memberLimit: number;
   members: FamilyMember[];
   messages: ChatMessage[];
   tasks: FamilyTask[];
@@ -900,10 +915,12 @@ export function FamilyProvider({ children }: { children: ReactNode }) {
     const soloMember = !familyId && profile ? toFamilyMember(profile, null) : null;
 
     const family = current?.family ?? null;
+    const isPremium = isPremiumActive(family);
 
     return {
       family,
-      isPremium: isPremiumActive(family),
+      isPremium,
+      memberLimit: memberLimitFor(isPremium, family?.maxMembers),
       members,
       messages: current?.messages ?? EMPTY_MESSAGES,
       tasks: current?.tasks ?? EMPTY_TASKS,

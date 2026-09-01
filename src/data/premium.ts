@@ -89,3 +89,33 @@ export function placeLimitFor(isPremium: boolean): number {
 export function canSaveAnotherPlace(isPremium: boolean, places: SavedPlace[]): boolean {
   return places.length < placeLimitFor(isPremium);
 }
+
+/**
+ * How many members a family may hold, by tier.
+ *
+ * These mirror `private.enforce_family_member_limit()`, which is what actually
+ * refuses the join — the numbers are repeated here so a counter can say "3 of
+ * 5" rather than promising room the trigger will not give, not because the
+ * client is trusted to enforce them. A join is redeemed on the *joiner's*
+ * device against a family they cannot see until they are in it, so this half
+ * never gets to stop anything; it only explains.
+ */
+export const FREE_MEMBER_LIMIT = 5;
+export const GOLD_MEMBER_LIMIT = 10;
+
+/**
+ * The tier's ceiling, narrowed by the family's own.
+ *
+ * `families.max_members` is the schema's hard bound (`between 1 and 10`) and
+ * the trigger takes `least()` of the two, so this takes the same minimum rather
+ * than assuming the column is always 10 — a counter that disagreed with the
+ * database about the denominator would be worse than no counter.
+ *
+ * Takes the derived boolean and not the family row, exactly like
+ * `placeLimitFor`: `FamilyContext` folds the two premium columns into
+ * `isPremium` once per render, and re-deriving it here would let the two
+ * disagree on a screen that holds one but not the other.
+ */
+export function memberLimitFor(isPremium: boolean, hardCap?: number | null): number {
+  return Math.min(hardCap ?? GOLD_MEMBER_LIMIT, isPremium ? GOLD_MEMBER_LIMIT : FREE_MEMBER_LIMIT);
+}
