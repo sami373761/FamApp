@@ -77,9 +77,11 @@ const modalDismissed = () =>
  * finger *stops* momentum, so tapping to halt a fling dismissed the keyboard
  * too.
  *
- * 28 px is above thumb jitter and the few pixels a scroll view gives back when
- * a touch lands on a moving list, and well under a deliberate flick — the same
- * order as a platform pan slop, which is the threshold this is standing in for.
+ * 40 px is comfortably above thumb jitter and the few pixels a scroll view
+ * gives back when a touch lands on a moving list, and still well under a
+ * deliberate flick. It is a little over a line of chat text, so the list can be
+ * nudged to uncover the line hiding behind the composer without the keyboard
+ * going anywhere.
  *
  * iOS's native `interactive` was the other candidate and is what WhatsApp uses,
  * but it does not survive contact with `KeyboardAvoidingView`: that component
@@ -91,7 +93,7 @@ const modalDismissed = () =>
  * `react-native-keyboard-controller`, which is a dependency this project has
  * argued itself out of adding for less.
  */
-const KEYBOARD_DISMISS_DRAG_PX = 28;
+const KEYBOARD_DISMISS_DRAG_PX = 40;
 
 /**
  * Family chat, and the app's primary way of creating a task.
