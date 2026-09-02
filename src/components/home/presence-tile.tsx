@@ -1,6 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { ActivityIndicator, ScrollView, StyleSheet, View } from 'react-native';
 
+import { BatteryBadge } from '@/components/family/battery-badge';
 import { Avatar } from '@/components/ui/avatar';
 import { Card } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -135,6 +136,21 @@ export function PresenceTile({
                   ? relativeTime(i18n, member.location.updatedAt)
                   : t('presenceTile.noLocation')}
               </Text>
+
+              {/*
+                Only for a member who is live. The gate is written out here
+                rather than hidden inside the badge because it is the whole rule
+                — a charge level is exactly as old as the position it rode in
+                with, so above five minutes it is a number that reads as current
+                and is not. The line above already says how old that is, which
+                is why *it* is safe at any age and this is not.
+              */}
+              {member.presence === 'online' && member.location ? (
+                <BatteryBadge
+                  level={member.location.batteryLevel}
+                  isCharging={member.location.isCharging}
+                />
+              ) : null}
             </PressableScale>
           ))}
         </ScrollView>

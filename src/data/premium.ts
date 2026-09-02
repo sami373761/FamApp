@@ -16,7 +16,7 @@
  * question being asked, and no `Translator` because nothing here produces copy.
  */
 
-import type { Family, SavedPlace } from '@/data/types';
+import type { Family, FamilyEvent, SavedPlace } from '@/data/types';
 
 /** The two plans the paywall offers, and the only values the RPC accepts. */
 export type PremiumPlan = 'annual' | 'monthly';
@@ -118,4 +118,44 @@ export const GOLD_MEMBER_LIMIT = 10;
  */
 export function memberLimitFor(isPremium: boolean, hardCap?: number | null): number {
   return Math.min(hardCap ?? GOLD_MEMBER_LIMIT, isPremium ? GOLD_MEMBER_LIMIT : FREE_MEMBER_LIMIT);
+}
+
+/**
+ * How many shared calendar events a family may hold, by tier.
+ *
+ * Mirrors `private.check_family_event_limit()`, which is what actually refuses
+ * the insert — the numbers are here so the composer can explain the ceiling
+ * before somebody fills in a form that cannot be saved, not because the client
+ * is trusted to enforce them.
+ *
+ * Gold is genuinely uncapped, and `Infinity` is how that is said rather than a
+ * large number standing in for one. It is the only unbounded tier in the app,
+ * and it is the one place the paywall's "no claim may be unlimited" rule does
+ * not bite: that rule exists because "unlimited saved places" and "30-day
+ * history" were selling something no schema could deliver, whereas here the
+ * trigger really does stop counting.
+ *
+ * **Birthdays are not counted against this.** They have no row — they are
+ * folded out of `profiles.birth_date` by `src/data/events.ts` — so a free
+ * family sees every birthday it has and is rationed only on the dates somebody
+ * typed. That is the same boundary the geofence pushes draw: the fold is free,
+ * the thing that only exists because it was entered is what is sold.
+ */
+export const FREE_EVENT_LIMIT = 1;
+
+export function eventLimitFor(isPremium: boolean): number {
+  return isPremium ? Infinity : FREE_EVENT_LIMIT;
+}
+
+/**
+ * Is there room for another shared event?
+ *
+ * A lapsed grant never deletes rows — the trigger is INSERT-only — so a family
+ * can legitimately sit *above* its own ceiling, and `<` is what keeps that
+ * reading as "full" rather than going negative anywhere. The same shape
+ * `canSaveAnotherPlace` has, and true for any Gold family because `Infinity`
+ * is never reached.
+ */
+export function canAddAnotherEvent(isPremium: boolean, events: FamilyEvent[]): boolean {
+  return events.length < eventLimitFor(isPremium);
 }

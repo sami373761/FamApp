@@ -1,21 +1,28 @@
 /**
  * Home: the family in one screen, as a bento grid.
  *
- * Four blocks, largest first — a status pill that carries whatever is most
+ * Five blocks, largest first — a status pill that carries whatever is most
  * worth acting on right now, a wide tile of everyone's positions, a pair of
- * mini tiles for the next task and the last thing said, and the activity feed
- * underneath. Nothing here is a summary of a summary: every line is a row from
- * `FamilyContext`, and a family with no rows gets a real zero rather than a
- * placeholder. The counters the old overview grid showed live inside the tiles
- * that own them.
+ * mini tiles for the next task and the last thing said, the family's next dates,
+ * and the activity feed underneath. Nothing here is a summary of a summary:
+ * every line is a row from `FamilyContext`, and a family with no rows gets a
+ * real zero rather than a placeholder. The counters the old overview grid showed
+ * live inside the tiles that own them.
+ *
+ * The dates card is the one block whose rows are not all rows: a birthday has
+ * no table, it is `profiles.birth_date` rolled forward by `upcomingEvents`. That
+ * is a *fold*, not a fixture — it renders nothing the schema cannot supply, and
+ * a member who has given no date simply has no line.
  */
 
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { useCallback, useMemo } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 
+import { EventModal, type EventModalMode } from '@/components/family/event-modal';
 import { ActivityRow } from '@/components/home/activity-row';
+import { EventsCard } from '@/components/home/events-card';
 import { LiveStatusPill, type StatusTone } from '@/components/home/live-status-pill';
 import { MiniTile } from '@/components/home/mini-tile';
 import { PresenceTile } from '@/components/home/presence-tile';
@@ -23,6 +30,7 @@ import { PLACE_ICONS } from '@/components/map/place-pin';
 import { PremiumBanner } from '@/components/premium/premium-banner';
 import { Avatar, Card, EmptyState, GradientSurface, Screen, Text } from '@/components/ui';
 import { deriveActivity } from '@/data/activity';
+import { HOME_EVENT_LIMIT, upcomingEvents } from '@/data/events';
 import {
   dueLabel,
   firstNameOf,
@@ -32,6 +40,7 @@ import {
   relativeTime,
 } from '@/data/format';
 import { membersAtPlaces, placeCategoryLabel, placeSentence, type MemberAtPlace } from '@/data/places';
+import { canAddAnotherEvent } from '@/data/premium';
 import type { FamilyMember, FamilyTask } from '@/data/types';
 import { useAuth } from '@/hooks/useAuth';
 import { useFamily } from '@/hooks/useFamily';
@@ -64,6 +73,7 @@ export default function HomeScreen() {
     messages,
     tasks,
     places,
+    events,
     currentMember,
     getMember,
     isLoading,
@@ -71,7 +81,20 @@ export default function HomeScreen() {
     error,
     isPremium,
     refresh,
+    createEvent,
+    deleteEvent,
   } = useFamily();
+
+  /**
+   * The event sheet's one open face, and the row `delete` is asking about.
+   *
+   * One `Sheet` with three faces rather than three sheets — presenting a modal
+   * while another is dismissing in the same frame is unreliable on iOS, which
+   * is the rule Chat's single panel and the Map's place sheet are both built
+   * around.
+   */
+  const [eventMode, setEventMode] = useState<EventModalMode>('none');
+  const [eventTarget, setEventTarget] = useState<string | null>(null);
 
   // Read from the profile rather than from `family`, which is also null while a
   // real family is loading — this must not flicker "you have no family".
@@ -150,6 +173,27 @@ export default function HomeScreen() {
   const activity = useMemo(
     () => deriveActivity({ i18n, messages, tasks, members }),
     [i18n, messages, tasks, members],
+  );
+
+  /**
+   * The next few dates, folded from the roster's birth dates and the family's
+   * own calendar and sorted together — see `upcomingEvents`. Recomputed rather
+   * than stored, because a countdown written down is wrong tomorrow.
+   *
+   * `members` and `events` are the only dependencies: `now` is left to default,
+   * so the list is as fresh as the render. That is right for a screen somebody
+   * opens rather than leaves open — and a card that ticked over at midnight
+   * without one would need a timer to say nothing new.
+   */
+  const occurrences = useMemo(
+    () => upcomingEvents({ members, events, limit: HOME_EVENT_LIMIT }),
+    [members, events],
+  );
+
+  /** The row the delete face is describing; null once it has been removed. */
+  const eventToRemove = useMemo(
+    () => events.find((event) => event.id === eventTarget) ?? null,
+    [events, eventTarget],
   );
 
   const nameFor = useCallback(
@@ -395,6 +439,28 @@ export default function HomeScreen() {
           know. Profile keeps its row, because that one is where a subscription
           is *managed* rather than sold, and it says "Active" instead.
         */}
+        {/*
+          Under the two mini tiles and above the promo, which is where a
+          countdown belongs: it is the family's own rows, and everything below
+          this point is either an advert or a log. The card carries its own
+          "Add" rather than being wrapped in a `Section`, because the action
+          belongs to the card's content and not to a heading above it.
+        */}
+        <EventsCard
+          occurrences={occurrences}
+          // Whether "Add" opens the form or the ceiling notice. The trigger is
+          // what actually decides — this only decides which face is opened
+          // first, so nobody fills in a form that cannot be saved.
+          canAdd={canAddAnotherEvent(isPremium, events)}
+          hasFamily={hasFamily}
+          isLoading={isLoading}
+          onAdd={() => setEventMode(canAddAnotherEvent(isPremium, events) ? 'form' : 'locked')}
+          onRemove={(eventId) => {
+            setEventTarget(eventId);
+            setEventMode('delete');
+          }}
+        />
+
         {isPremium ? null : (
           <PremiumBanner
             title={t('premium.bannerTitle')}
@@ -429,6 +495,27 @@ export default function HomeScreen() {
           )}
         </Card>
       </View>
+
+      <EventModal
+        mode={eventMode}
+        target={eventToRemove}
+        eventCount={events.length}
+        onCreate={createEvent}
+        onDelete={deleteEvent}
+        /*
+          Closed before the push, exactly as Chat's "+" menu and the Map's place
+          sheet close before the same one: the paywall is presented as a modal,
+          and stacking it on a live `Sheet` is two modals in one frame.
+        */
+        onUpgrade={() => {
+          setEventMode('none');
+          router.push('/premium');
+        }}
+        onClose={() => {
+          setEventMode('none');
+          setEventTarget(null);
+        }}
+      />
     </Screen>
   );
 }

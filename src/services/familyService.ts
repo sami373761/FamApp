@@ -169,6 +169,12 @@ export function toFamilyMember(row: ProfileRow, location: MemberLocation | null)
     avatar: parseAvatarConfig(row.avatar_config),
     role: toFamilyRole(row.role),
     isAdmin: row.is_admin,
+    // A `date` column, so PostgREST returns `YYYY-MM-DD` with no time and no
+    // zone. Carried through as that string rather than parsed here —
+    // `parseDateOnly` in `data/events.ts` turns it into a *local* midnight, and
+    // `new Date('1990-05-04')` would make it the 3rd for everybody west of
+    // Greenwich.
+    birthDate: row.birth_date,
     createdAt: row.created_at,
     location,
     presence: presenceFrom(location),
@@ -283,7 +289,7 @@ export async function joinFamily(input: JoinFamilyInput): Promise<FamilyResult<F
 
 /**
  * Edits the caller's own row. `family_id`, `is_admin`, `daily_photo_count` and
- * `created_at` are all rejected by `guard_profile_columns()`, so only the four
+ * `created_at` are all rejected by `guard_profile_columns()`, so only the five
  * fields a member genuinely owns are offered here.
  *
  * `avatar` is written as a whole object rather than merged: the column is a
@@ -295,6 +301,18 @@ export async function updateOwnProfile(patch: {
   colorIndex?: number;
   role?: FamilyRole;
   avatar?: AvatarConfig;
+  /**
+   * `YYYY-MM-DD`, or null to clear it.
+   *
+   * Null is offered here and nowhere else in this patch, because it is the one
+   * field somebody may reasonably want to take back — a name and a colour
+   * always have a value, and a role has none until it is set. It belongs in
+   * this function rather than in a calendar service for the same reason
+   * `display_name` does: it is a fact about the member, not about the family's
+   * dates, and `guard_profile_columns()` is a denylist that lets its owner
+   * write it.
+   */
+  birthDate?: string | null;
 }): Promise<FamilyResult<ProfileRow>> {
   return guarded(async () => {
     const { data: auth } = await supabase.auth.getUser();
@@ -308,6 +326,7 @@ export async function updateOwnProfile(patch: {
         ...(patch.colorIndex === undefined ? {} : { color_index: patch.colorIndex }),
         ...(patch.role === undefined ? {} : { role: patch.role }),
         ...(patch.avatar === undefined ? {} : { avatar_config: patch.avatar }),
+        ...(patch.birthDate === undefined ? {} : { birth_date: patch.birthDate }),
       })
       .eq('id', auth.user.id)
       .select()

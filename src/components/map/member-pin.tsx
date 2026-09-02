@@ -1,5 +1,6 @@
 import { StyleSheet, View } from 'react-native';
 
+import { BatteryBadge } from '@/components/family/battery-badge';
 import { Avatar } from '@/components/ui/avatar';
 import { Text } from '@/components/ui/text';
 import { firstNameOf } from '@/data/format';
@@ -94,9 +95,32 @@ export function MemberPin({ member, selected }: MemberPinProps) {
           styles.label,
           { backgroundColor: colors.surface, borderColor: selected ? memberColor : colors.border },
         ]}>
-        <Text variant="label" numberOfLines={1}>
+        {/* Shrinks rather than pushes: the tag is capped at `PIN_WIDTH`, so a
+            long first name has to give way to the badge instead of squeezing
+            it out of the box. */}
+        <Text variant="label" numberOfLines={1} style={styles.name}>
           {firstNameOf(i18n, member.displayName)}
         </Text>
+
+        {/*
+          Inside the name tag rather than under it, and that is geometry as much
+          as taste: `MEMBER_PIN_SIZE` is a fixed box the web map multiplies the
+          anchor by, so a badge on its own line would move every pin off the
+          coordinate it marks. `inline` drops the chip's own fill, because a
+          pill inside this pill would read as two labels.
+
+          `presence === 'online'` is the whole gate, and it lives here at the
+          call site on purpose — see `BatteryBadge`. A charge level is only ever
+          as fresh as the position it was written with, and a pin that has not
+          been restamped in an hour must not carry a number that looks current.
+        */}
+        {member.presence === 'online' && member.location ? (
+          <BatteryBadge
+            level={member.location.batteryLevel}
+            isCharging={member.location.isCharging}
+            variant="inline"
+          />
+        ) : null}
       </View>
     </View>
   );
@@ -111,7 +135,14 @@ const styles = StyleSheet.create({
   // member's identity and has to survive being tapped.
   avatarRingSelected: { borderWidth: 3 },
   halo: { padding: 4, borderRadius: Radius.pill, borderWidth: 2 },
+  name: { flexShrink: 1 },
   label: {
+    // A row, because the name tag now carries the battery badge beside the
+    // name — see the note at the call site. The height is unchanged, which is
+    // what keeps `MEMBER_PIN_ANCHOR` pointing at the same place.
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
     marginTop: Spacing.xs,
     paddingHorizontal: Spacing.sm,
     paddingVertical: 2,

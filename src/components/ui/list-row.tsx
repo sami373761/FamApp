@@ -93,7 +93,19 @@ export function ListRow({
           </Text>
         ) : null}
 
-        {badge ? <Badge label={badge} tone={badgeTone} /> : null}
+        {/*
+          The badge sits in its own slot rather than directly in the row.
+          `Badge` pins itself with `alignSelf: 'flex-start'` so it cannot
+          stretch in a column, which in a *row* means the cross axis — it would
+          ride the top of a two-line row instead of centring against the label.
+          The wrapper inherits the row's own `alignItems`, and carries the gap
+          the chevron needs so the two do not touch.
+        */}
+        {badge ? (
+          <View style={showChevron && !disabled ? styles.badgeSlot : undefined}>
+            <Badge label={badge} tone={badgeTone} />
+          </View>
+        ) : null}
 
         {showChevron && !disabled ? (
           <Ionicons name="chevron-forward" size={16} color={colors.textTertiary} />
@@ -123,4 +135,5 @@ const styles = StyleSheet.create({
     paddingRight: Spacing.lg,
   },
   labels: { flex: 1, gap: 2 },
+  badgeSlot: { marginRight: Spacing.xs },
 });

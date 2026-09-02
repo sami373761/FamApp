@@ -44,7 +44,7 @@ import { useTheme } from '@/hooks/use-theme';
 import { useTranslation } from '@/hooks/use-translation';
 import { describeLanguage } from '@/i18n';
 import { deleteAccount } from '@/services/authService';
-import { clearOwnLocation } from '@/services/locationService';
+import { clearOwnBattery, clearOwnLocation } from '@/services/locationService';
 import {
   registerForPushNotifications,
   unregisterFromPushNotifications,
@@ -86,6 +86,7 @@ export default function ProfileScreen() {
   const [isPickingLanguage, setIsPickingLanguage] = useState(false);
   const [isUpdatingNotifications, setIsUpdatingNotifications] = useState(false);
   const [isUpdatingLocation, setIsUpdatingLocation] = useState(false);
+  const [isUpdatingBattery, setIsUpdatingBattery] = useState(false);
   const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -177,6 +178,51 @@ export default function ProfileScreen() {
     }
 
     if (isMounted()) setIsUpdatingLocation(false);
+  }
+
+  /**
+   * Turning battery sharing off blanks the two columns on the position row that
+   * is already stored, rather than waiting for the next fix to overwrite them.
+   *
+   * That wait is the whole reason this does anything at all: `updateOwnLocation`
+   * always sends both columns, so the next write would clear them anyway — but
+   * the next write is up to twelve minutes away, and on a phone that has stopped
+   * moving the heartbeat puts it up to two hours away. A privacy switch that
+   * takes effect eventually is not a privacy switch.
+   *
+   * Switching it *on* writes nothing: there is no reading to send until the
+   * tracker takes its next fix, and manufacturing one here would be a second
+   * place deciding when a position gets written. The Map's "Locate me" is the
+   * way to make it immediate, and it already is one.
+   *
+   * The switch moves first and moves back if the clear fails — the same rule
+   * location sharing and notifications follow, for the same reason.
+   */
+  async function setBatterySharing(next: boolean) {
+    setSettingsError(null);
+    setPreference('batterySharing', next);
+
+    if (next) return;
+
+    setIsUpdatingBattery(true);
+
+    const { data: cleared, error } = await clearOwnBattery();
+
+    if (!isMounted()) return;
+
+    if (error) {
+      setSettingsError(errorText(i18n, error));
+      setPreference('batterySharing', true);
+    } else if (cleared) {
+      // The badge on Home and on the map reads this row. It came back from the
+      // update, so it is committed rather than refetched — the same local
+      // commit `setLocationSharing` makes with the row it deleted. Null means
+      // there was no position to clear a reading from, and committing that
+      // would take somebody's pin off their own map.
+      setOwnLocation(cleared);
+    }
+
+    if (isMounted()) setIsUpdatingBattery(false);
   }
 
   /**
@@ -383,6 +429,27 @@ export default function ProfileScreen() {
             value={preferences.locationSharing}
             onValueChange={(value) => void setLocationSharing(value)}
             busy={isUpdatingLocation}
+          />
+          {/*
+            Under location sharing, because it is a narrowing of it rather than
+            a separate capability: the charge level is written as two columns of
+            the position row, so with nothing shared there is nothing for this
+            to ride on. Disabled in that case rather than hidden — a control
+            that vanishes explains nothing, which is the same argument the
+            "Manage members" row makes for a non-admin.
+          */}
+          <SwitchRow
+            icon="battery-half-outline"
+            label={t('profile.batterySharing')}
+            description={
+              preferences.locationSharing
+                ? t('profile.batterySharingHint')
+                : t('profile.batterySharingDisabled')
+            }
+            value={preferences.batterySharing}
+            onValueChange={(value) => void setBatterySharing(value)}
+            disabled={!preferences.locationSharing}
+            busy={isUpdatingBattery}
           />
           {/*
             A row rather than a `Segmented` like Appearance below: eleven

@@ -1,7 +1,7 @@
 /**
  * The menu behind the composer's "+".
  *
- * Two entries, and each of them can be in one of three states — available,
+ * Three entries, and each of them can be in one of three states — available,
  * unavailable because there is no family, or, for photos, behind FamApp Gold.
  * None of the three is hidden: the same treatment "Manage members" gets for a
  * non-admin, and the reason is the same one — a control that vanishes explains
@@ -39,6 +39,12 @@ type ChatActionsListProps = {
   /** True while a pick-and-upload started from this row is still running. */
   isSendingPhoto?: boolean;
   onCreateTask: () => void;
+  /**
+   * Opens the poll form. Gated on the same `canCreateTask` flag rather than one
+   * of its own: a poll is a `messages` row plus a `chat_polls` row, and both
+   * carry a `not null` family id, so the boundary is exactly the same one.
+   */
+  onCreatePoll: () => void;
   /** Gold family: open the picker. */
   onSendPhoto: () => void;
   /** Free family: go to the paywall instead. */
@@ -50,6 +56,7 @@ export function ChatActionsList({
   isPremium,
   isSendingPhoto = false,
   onCreateTask,
+  onCreatePoll,
   onSendPhoto,
   onUpgrade,
 }: ChatActionsListProps) {
@@ -72,6 +79,24 @@ export function ChatActionsList({
         }
         disabled={!canCreateTask}
         onPress={onCreateTask}
+      />
+
+      {/*
+        Free for every tier, deliberately. A poll is two ordinary rows in tables
+        every member can already write to, and neither `chat_polls: insert own`
+        nor `chat_poll_votes: insert own` reads `families.is_premium` — so
+        putting a padlock here would be selling something the database hands out
+        anyway, which is a worse lie than the photo row's (that one at least
+        mirrors a boundary the product intends).
+      */}
+      <ActionRow
+        icon="stats-chart-outline"
+        label={t('chatActions.createPoll')}
+        description={
+          canCreateTask ? t('chatActions.createPollHint') : t('chatActions.createPollDisabled')
+        }
+        disabled={!canCreateTask}
+        onPress={onCreatePoll}
       />
 
       <ActionRow

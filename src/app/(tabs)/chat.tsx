@@ -16,6 +16,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { ChatActionsList } from '@/components/chat/chat-actions-sheet';
 import { MessageActionsList } from '@/components/chat/message-actions-sheet';
 import { PhotoComposer } from '@/components/chat/photo-composer';
+import { PollCreateForm } from '@/components/chat/poll-create-sheet';
+import { PollMessageCard } from '@/components/chat/poll-message-card';
 import { ChatComposer } from '@/components/chat/chat-composer';
 import { MessageBubble } from '@/components/chat/message-bubble';
 import { TaskMessageCard } from '@/components/chat/task-message-card';
@@ -35,6 +37,7 @@ import { groupByDay } from '@/services/chatService';
 import { MAX_TASK_TITLE_LENGTH } from '@/services/taskService';
 import { useAuth } from '@/hooks/useAuth';
 import { useFamily } from '@/hooks/useFamily';
+import { useHaptics } from '@/hooks/use-haptics';
 import { useIsMounted } from '@/hooks/use-safe-back';
 import { useTabBarMetrics } from '@/hooks/use-tab-bar';
 import { useTheme } from '@/hooks/use-theme';
@@ -153,6 +156,8 @@ export default function ChatScreen() {
     members,
     messages,
     tasks,
+    polls,
+    pollVotes,
     getMember,
     isLoading,
     sendMessage,
@@ -161,11 +166,14 @@ export default function ChatScreen() {
     sendImage,
     deleteMessage,
     createTask,
+    createPoll,
+    votePoll,
     setTaskStatus,
     currentMember,
   } = useFamily();
   const scrollRef = useRef<ScrollView>(null);
   const isMounted = useIsMounted();
+  const haptic = useHaptics();
   const { clearance } = useTabBarMetrics();
 
   /**
@@ -198,12 +206,23 @@ export default function ChatScreen() {
   // refusing after it has been filled in.
   const hasFamily = !!profile?.family_id;
 
-  // One sheet, five states — not five sheets. Dismissing a native modal while
+  // One sheet, six states — not six sheets. Dismissing a native modal while
   // presenting another in the same frame is unreliable on iOS, so the message
-  // menu, "Create task" and the photo confirmation each change what the open
-  // sheet holds rather than handing off to a second one.
-  const [sheet, setSheet] = useState<'none' | 'actions' | 'message' | 'task' | 'photo'>('none');
+  // menu, "Create task", "Create poll" and the photo confirmation each change
+  // what the open sheet holds rather than handing off to a second one.
+  const [sheet, setSheet] = useState<
+    'none' | 'actions' | 'message' | 'task' | 'poll' | 'photo'
+  >('none');
   const [busyTaskId, setBusyTaskId] = useState<string | null>(null);
+  /** The poll whose vote is in flight — one at a time, like `busyTaskId`. */
+  const [busyPollId, setBusyPollId] = useState<string | null>(null);
+  /**
+   * A refused vote, reported above the composer beside the photo strip's
+   * failures. The card itself has nowhere to put a sentence — it is a list of
+   * answers — and a `ConfirmDialog` for a vote that did not land would be
+   * heavier than the action it is about.
+   */
+  const [voteError, setVoteError] = useState<string | null>(null);
 
   /**
    * The message a long press is asking about, and the seed the task form opens
@@ -277,6 +296,21 @@ export default function ChatScreen() {
     return index;
   }, [tasks]);
 
+  /*
+    The same lookup for polls, and the same reasoning. `message_id` is unique on
+    `chat_polls`, so this is a genuine one-to-one rather than a last-one-wins —
+    and it is built from the poll rows rather than from a flag on the message,
+    which is what keeps the dependency one-way: lose the poll and the question
+    is still a readable line of chat.
+  */
+  const pollByMessageId = useMemo(() => {
+    const index = new Map<string, (typeof polls)[number]>();
+
+    for (const poll of polls) index.set(poll.messageId, poll);
+
+    return index;
+  }, [polls]);
+
   /**
    * Where the list stood when the current drag started, or null when no finger
    * is driving it — which is also what makes momentum and the `scrollToEnd`
@@ -322,6 +356,41 @@ export default function ChatScreen() {
 
     if (isMounted()) setBusyTaskId(null);
   }
+
+  /**
+   * Casting, changing or retracting a vote — the card has already decided which
+   * of the three a press means, and hands the answer down as an index or null.
+   *
+   * The haptic is fired here rather than inside the card so the *write* owns it,
+   * which is the rule every other feedback in this app follows: `select` for
+   * moving within a set (which casting and changing both are), `tap` for
+   * undoing. `PressableScale`'s own `select` already answered the finger; this
+   * is the one that says the family heard it.
+   *
+   * Not optimistic. A vote is a single small write and `setTaskStatus` — the
+   * closest thing to it — is not optimistic either; the alternative would need a
+   * restore path for a refusal, which is the machinery `deleteMessage` carries
+   * because *it* removes something the user can see.
+   */
+  const submitVote = useCallback(
+    async (pollId: string, optionIndex: number | null) => {
+      // Fired on the gesture rather than on the result, exactly as `SwitchRow`
+      // does: the write may fail, and a buzz that waited for the server would
+      // arrive long after the thumb had moved on.
+      haptic(optionIndex === null ? 'tap' : 'select');
+
+      setBusyPollId(pollId);
+      setVoteError(null);
+
+      const failure = await votePoll(pollId, optionIndex);
+
+      if (!isMounted()) return;
+
+      setBusyPollId(null);
+      setVoteError(failure);
+    },
+    [haptic, isMounted, votePoll],
+  );
 
   /**
    * Pick, compress, upload, post — in that order, and the order is load-bearing.
@@ -607,8 +676,26 @@ export default function ChatScreen() {
 
                 {day.messages.map((message, index) => {
                   const task = taskByMessageId.get(message.id);
+                  const poll = pollByMessageId.get(message.id);
                   const isOwn = message.senderId === user?.id;
                   const previous = day.messages[index - 1];
+
+                  if (poll) {
+                    return (
+                      <PollMessageCard
+                        key={message.id}
+                        poll={poll}
+                        votes={pollVotes}
+                        createdAt={message.createdAt}
+                        author={getMember(message.senderId)}
+                        isOwn={isOwn}
+                        currentUserId={user?.id}
+                        getMember={getMember}
+                        busy={busyPollId === poll.id}
+                        onVote={(optionIndex) => void submitVote(poll.id, optionIndex)}
+                      />
+                    );
+                  }
 
                   if (task) {
                     return (
@@ -643,11 +730,13 @@ export default function ChatScreen() {
                         setSheet('message');
                       }}
                       // Only label the first message in a run from the same
-                      // person — but a task card breaks the run, so the bubble
-                      // under one is labelled again even from the same sender.
+                      // person — but a card breaks the run, so the bubble under
+                      // one is labelled again even from the same sender. Both
+                      // kinds of card count.
                       showAuthor={
                         previous?.senderId !== message.senderId ||
-                        taskByMessageId.has(previous.id)
+                        taskByMessageId.has(previous.id) ||
+                        pollByMessageId.has(previous.id)
                       }
                     />
                   );
@@ -662,15 +751,28 @@ export default function ChatScreen() {
           photo is in the stream under its own veil this strip would be the
           second place on one screen saying the upload is running.
         */}
-        {photoStage === 'preparing' || photoError ? (
+        {photoStage === 'preparing' || photoError || voteError ? (
           <View
             style={[
               styles.photoStatus,
               { backgroundColor: colors.surface, borderTopColor: colors.border },
             ]}>
-            {photoError ? null : <ActivityIndicator size="small" color={colors.textTertiary} />}
-            <Text variant="caption" color={photoError ? 'danger' : 'textSecondary'} style={styles.flex}>
-              {photoError ?? t('chat.photoUploading')}
+            {photoError || voteError ? null : (
+              <ActivityIndicator size="small" color={colors.textTertiary} />
+            )}
+            {/*
+              One strip, three things it can say. A refused vote lands here
+              rather than on the card because the card is a list of answers with
+              nowhere to put a sentence — and a dialog for a vote that did not
+              land would be heavier than the action it is about. The photo's
+              failure wins the slot when both are set: it is the one that cost
+              the user a pick and an upload.
+            */}
+            <Text
+              variant="caption"
+              color={photoError || voteError ? 'danger' : 'textSecondary'}
+              style={styles.flex}>
+              {photoError ?? voteError ?? t('chat.photoUploading')}
             </Text>
           </View>
         ) : null}
@@ -687,23 +789,27 @@ export default function ChatScreen() {
         title={
           sheet === 'task'
             ? t('composer.title')
-            : sheet === 'message'
-              ? t('messageActions.title')
-              : t('chatActions.title')
+            : sheet === 'poll'
+              ? t('poll.composerTitle')
+              : sheet === 'message'
+                ? t('messageActions.title')
+                : t('chatActions.title')
         }
         description={
           sheet === 'task'
             ? t('composer.description')
-            : // Which message this is about. The sheet covers the list it was
-              // opened from, so the menu would otherwise be two actions and no
-              // subject; a photo with no caption has nothing to quote.
-              sheet === 'message' && actionMessage?.content
-              ? truncate(actionMessage.content.trim(), ACTION_EXCERPT_LENGTH)
-              : undefined
+            : sheet === 'poll'
+              ? t('poll.composerDescription')
+              : // Which message this is about. The sheet covers the list it was
+                // opened from, so the menu would otherwise be two actions and no
+                // subject; a photo with no caption has nothing to quote.
+                sheet === 'message' && actionMessage?.content
+                ? truncate(actionMessage.content.trim(), ACTION_EXCERPT_LENGTH)
+                : undefined
         }
-        // The panel runs a menu, a message menu, a task form and a photo
-        // confirmation through one frame; naming which it is holding is what
-        // makes the change read as one surface changing its mind.
+        // The panel runs a menu, a message menu, a task form, a poll form and a
+        // photo confirmation through one frame; naming which it is holding is
+        // what makes the change read as one surface changing its mind.
         contentKey={sheet}
         onClose={closeSheet}>
         {sheet === 'actions' ? (
@@ -717,6 +823,9 @@ export default function ChatScreen() {
               setTaskTitleSeed('');
               setSheet('task');
             }}
+            // Swapping the panel's children, not opening a second sheet — the
+            // one-modal rule this screen is built around.
+            onCreatePoll={() => setSheet('poll')}
             onSendPhoto={() => void pickPhoto()}
             /*
               Closed before the push, for the reason the Map's place sheet
@@ -754,6 +863,13 @@ export default function ChatScreen() {
             onCreate={createTask}
             onClose={closeSheet}
           />
+        ) : null}
+
+        {/* Unmounted on close for the same reason the task form is: the draft —
+            a question and up to four answers — lives in local state and has no
+            reset of its own. */}
+        {sheet === 'poll' ? (
+          <PollCreateForm onCreate={createPoll} onClose={closeSheet} />
         ) : null}
 
         {/* Same reason it is unmounted on close: the caption lives in the

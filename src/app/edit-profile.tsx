@@ -1,8 +1,9 @@
 /**
- * Editing the three things a member owns about themselves: the name their
- * family sees, the colour they are identified by, and the role they claim.
+ * Editing the four things a member owns about themselves: the name their family
+ * sees, the colour they are identified by, the role they claim, and the date
+ * their family counts down to.
  *
- * All three are plain columns on the caller's own `profiles` row, so this is an
+ * All four are plain columns on the caller's own `profiles` row, so this is an
  * ordinary update rather than an RPC — `profiles: update own` allows it, and
  * `guard_profile_columns()` rejects everything else, which is why nothing here
  * offers `is_admin` or `family_id`. `role` is a self-declared label with no
@@ -17,6 +18,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useState } from 'react';
 import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, View } from 'react-native';
 
+import { DateField } from '@/components/family/date-field';
 import {
   Button,
   Card,
@@ -65,15 +67,30 @@ export default function EditProfileScreen() {
   // list — so the row's own colour is always one of the swatches below.
   const [colorIndex, setColorIndex] = useState(() => profile?.color_index ?? 0);
   const [role, setRole] = useState<FamilyRole | null>(() => toFamilyRole(profile?.role));
+  /**
+   * `YYYY-MM-DD`, `''` for "cleared", or null while the field holds something
+   * that is not yet a date.
+   *
+   * Three states rather than two, because they mean three different things to
+   * the write below: a value is sent, an empty string is sent *as null* to
+   * clear the column, and null is a half-typed date that must not be saved at
+   * all. `DateField` owns the typing and reports only these three.
+   */
+  const [birthDate, setBirthDate] = useState<string | null>(() => profile?.birth_date ?? '');
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
   const trimmed = displayName.trim();
   const isNameValid = trimmed.length >= NAME_MIN && trimmed.length <= NAME_MAX;
+  // A half-typed date is not a change worth saving, and it is also not one worth
+  // *blocking* — the other three fields are still editable while it is being
+  // typed. So it counts as a change only once it is a real value or a clear.
+  const isBirthDateReady = birthDate !== null;
   const hasChanges =
     trimmed !== (profile?.display_name ?? '').trim() ||
     colorIndex !== (profile?.color_index ?? 0) ||
-    role !== toFamilyRole(profile?.role);
+    role !== toFamilyRole(profile?.role) ||
+    (isBirthDateReady && birthDate !== (profile?.birth_date ?? ''));
 
   async function save() {
     if (!isNameValid) {
@@ -90,6 +107,11 @@ export default function EditProfileScreen() {
       // Omitted rather than sent as null: `updateOwnProfile` builds its patch
       // from the keys present, and there is no "clear my role" affordance.
       ...(role ? { role } : {}),
+      // The one field here that *can* be cleared, so `''` is translated to the
+      // null the column wants. A half-typed value is omitted entirely rather
+      // than sent — the patch is built from the keys present, so leaving it out
+      // is what stops a partial date overwriting a good one.
+      ...(isBirthDateReady ? { birthDate: birthDate || null } : {}),
     });
 
     if (!isMounted()) return;
@@ -146,6 +168,30 @@ export default function EditProfileScreen() {
                   : undefined
               }
             />
+
+            {/*
+              Optional, and the hint says what it is *for* rather than asking
+              for it: this is the only column behind Home's birthday countdown,
+              and a member who leaves it blank simply has no occurrence — no
+              placeholder row, no "birthday unknown" line. It sits under the
+              name because both are identity; the colour and the role below are
+              choices.
+            */}
+            <View style={styles.field}>
+              <DateField
+                label={t('editProfile.birthDateLabel')}
+                value={profile?.birth_date ?? ''}
+                onChange={setBirthDate}
+                editable={!isSaving}
+                // A birth date in the future is not one, and
+                // `private.check_birth_date()` refuses it anyway — saying so
+                // here beats a round trip to be told.
+                disallowFuture
+              />
+              <Text variant="caption" color="textTertiary">
+                {t('editProfile.birthDateHint')}
+              </Text>
+            </View>
 
             <View style={styles.field}>
               <Text variant="captionStrong" color="textSecondary">

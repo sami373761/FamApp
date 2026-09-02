@@ -18,11 +18,15 @@ import { presenceFrom } from '@/data/format';
 import { isPremiumActive, memberLimitFor } from '@/data/premium';
 import type {
   ChatMessage,
+  ChatPoll,
   Family,
+  FamilyEvent,
+  FamilyEventType,
   FamilyMember,
   FamilyTask,
   MemberLocation,
   PlaceCategory,
+  PollVote,
   SavedPlace,
   TaskDuration,
   TaskStatus,
@@ -31,6 +35,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useTranslation } from '@/hooks/use-translation';
 import * as chatMediaService from '@/services/chatMediaService';
 import * as chatService from '@/services/chatService';
+import * as eventsService from '@/services/eventsService';
 import {
   getFamilyOverview,
   regenerateJoinCode as regenerateJoinCodeRequest,
@@ -39,6 +44,7 @@ import {
   type ProfileRow,
 } from '@/services/familyService';
 import * as placesService from '@/services/placesService';
+import * as pollService from '@/services/pollService';
 import { subscribeToFamily } from '@/services/realtimeService';
 import { errorText } from '@/services/result';
 import * as taskService from '@/services/taskService';
@@ -72,6 +78,37 @@ export type NewPlace = {
   title: string;
   latitude: number;
   longitude: number;
+};
+
+/**
+ * Everything the poll composer collects.
+ *
+ * No message id: `createPoll` writes the question as a message itself, because
+ * the question *is* the message — see the note on that function. No family
+ * either, for the reason `NewPlace` gives: it is decided by the session and
+ * pinned by `private.check_poll_family()`.
+ */
+export type NewPoll = {
+  question: string;
+  /**
+   * Two to four answers. Blank entries are dropped by the service rather than
+   * refused — an untouched fourth field is not an error, it is three options.
+   */
+  options: string[];
+};
+
+/**
+ * Everything the event composer collects.
+ *
+ * `eventDate` is `YYYY-MM-DD` and stays a string all the way to the column,
+ * which is a `date`. Turning it into a `Date` anywhere on this path would
+ * introduce a timezone the schema does not have.
+ */
+export type NewEvent = {
+  title: string;
+  eventDate: string;
+  eventType: FamilyEventType;
+  isAnnual: boolean;
 };
 
 export type FamilyContextValue = {
@@ -113,6 +150,30 @@ export type FamilyContextValue = {
    * `saved_places: family reads` policy allows.
    */
   places: SavedPlace[];
+  /**
+   * Every poll in the family. Chat indexes these by `messageId` to decide which
+   * message to draw as a card, the same way it indexes tasks by
+   * `sourceMessageId` — a lookup built from rows, not a flag on the message.
+   */
+  polls: ChatPoll[];
+  /**
+   * Every vote on every one of those polls, unfiltered.
+   *
+   * One flat list rather than a count per poll, because a count is a
+   * *derivation* — `tallyPoll` in `src/data/polls.ts` folds it — and storing one
+   * here would be a number that goes stale the moment the socket delivers a
+   * vote. It is also what lets a card show *who* voted for what, which is the
+   * whole difference between a family poll and an anonymous one.
+   */
+  pollVotes: PollVote[];
+  /**
+   * The family's shared calendar — the dates somebody typed.
+   *
+   * **Birthdays are not in here.** They come off `members[].birthDate` and are
+   * folded in by `upcomingEvents` in `src/data/events.ts`, which is why a free
+   * family still sees every birthday it has: this list is the one the tier caps.
+   */
+  events: FamilyEvent[];
   /** The signed-in user's own row in `members`, once it has loaded. */
   currentMember: FamilyMember | null;
   /** Components hold member *ids*; this is how they resolve one. */
@@ -197,6 +258,36 @@ export type FamilyContextValue = {
    */
   createTask: (input: NewTask) => Promise<string | null>;
   /**
+   * Asks the question **and** attaches the poll to it, which is what puts a
+   * card in the message stream.
+   *
+   * The message goes first here, which is the opposite of `createTask` and
+   * right for the opposite reason: `chat_polls.message_id` references the row,
+   * and a message with no poll behind it is somebody asking a question — a
+   * perfectly good outcome — whereas an announcement with no task behind it
+   * would be a claim about a row that never existed.
+   */
+  createPoll: (input: NewPoll) => Promise<string | null>;
+  /**
+   * Casts, changes or retracts this member's vote.
+   *
+   * `optionIndex` of null is a retraction, and passing the option they are
+   * already on is treated as one — that is what makes the answers a toggle
+   * rather than a one-way trip, exactly as pressing a task's current status
+   * clears it back to `pending`.
+   */
+  votePoll: (pollId: string, optionIndex: number | null) => Promise<string | null>;
+  /**
+   * Adds a date to the shared calendar.
+   *
+   * Refused past the free tier's ceiling by `check_family_event_limit()`, which
+   * arrives as `LIMIT_REACHED` — the composer explains that before the form is
+   * ever opened, but the trigger is what decides.
+   */
+  createEvent: (input: NewEvent) => Promise<string | null>;
+  /** Only the author's own dates; anyone else's is refused by RLS. */
+  deleteEvent: (eventId: string) => Promise<string | null>;
+  /**
    * Admin-only, enforced by the database. A member who is not an admin gets
    * the RPC's own refusal back as the message.
    */
@@ -247,6 +338,9 @@ type LoadedFamily = {
   messages: ChatMessage[];
   tasks: FamilyTask[];
   places: SavedPlace[];
+  polls: ChatPoll[];
+  pollVotes: PollVote[];
+  events: FamilyEvent[];
   error: string | null;
 };
 
@@ -254,6 +348,9 @@ const EMPTY_MEMBERS: FamilyMember[] = [];
 const EMPTY_MESSAGES: ChatMessage[] = [];
 const EMPTY_TASKS: FamilyTask[] = [];
 const EMPTY_PLACES: SavedPlace[] = [];
+const EMPTY_POLLS: ChatPoll[] = [];
+const EMPTY_VOTES: PollVote[] = [];
+const EMPTY_EVENTS: FamilyEvent[] = [];
 
 /*
   Every commit into a loaded family goes through one of the reducers below — a
@@ -400,6 +497,107 @@ function withProfile(state: LoadedFamily, row: ProfileRow): LoadedFamily {
 }
 
 /**
+ * A poll, matched on its primary key like every other reducer here.
+ *
+ * There is no update path — `chat_polls` has no UPDATE policy, because the
+ * options array is what votes index into — so an id already present means this
+ * device's own insert and the socket's echo of it, and only one may land.
+ * Ignoring the second is the whole handling.
+ *
+ * Nothing sorts polls: they are looked up by `messageId` and drawn wherever
+ * that message sits in the conversation, so the list's own order is never read.
+ */
+function withPoll(state: LoadedFamily, poll: ChatPoll): LoadedFamily {
+  if (state.polls.some((candidate) => candidate.id === poll.id)) return state;
+
+  return { ...state, polls: [...state.polls, poll] };
+}
+
+/**
+ * One member's answer to one poll.
+ *
+ * Matched on the *row* id, but replacing by `(pollId, memberId)` as well: a
+ * member changing their mind is an UPDATE of the same row and arrives at the
+ * same id, while this device's own upsert and the socket's echo of it can cross
+ * in either order. Filtering on the pair is what makes both cases land as one
+ * vote — and it is also what keeps the tally honest if a row id ever changed
+ * underneath a member, since `unique (poll_id, user_id)` says there can only be
+ * the one.
+ */
+function withVote(state: LoadedFamily, vote: PollVote): LoadedFamily {
+  const existing = state.pollVotes.find(
+    (candidate) => candidate.pollId === vote.pollId && candidate.memberId === vote.memberId,
+  );
+
+  if (existing && isSameRow(existing, vote)) return state;
+
+  const without = state.pollVotes.filter(
+    (candidate) => !(candidate.pollId === vote.pollId && candidate.memberId === vote.memberId),
+  );
+
+  return { ...state, pollVotes: [...without, vote] };
+}
+
+/**
+ * Drops a vote by row id — the socket's DELETE, which is how a retraction
+ * reaches every other device. Deliverable only because `chat_poll_votes`
+ * carries `replica identity full`.
+ */
+function withoutVote(state: LoadedFamily, voteId: string): LoadedFamily {
+  const pollVotes = state.pollVotes.filter((vote) => vote.id !== voteId);
+
+  return pollVotes.length === state.pollVotes.length ? state : { ...state, pollVotes };
+}
+
+/**
+ * The same thing by `(pollId, memberId)`, for the device that made the write.
+ *
+ * `retractVote` deletes by that pair rather than by a row id it never saw, so
+ * the local commit has to match the same way. The socket's own DELETE arrives a
+ * moment later carrying the row id and finds nothing left to remove, which is
+ * the reducer contract working rather than a miss.
+ */
+function withoutOwnVote(state: LoadedFamily, pollId: string, memberId: string): LoadedFamily {
+  const pollVotes = state.pollVotes.filter(
+    (vote) => !(vote.pollId === pollId && vote.memberId === memberId),
+  );
+
+  return pollVotes.length === state.pollVotes.length ? state : { ...state, pollVotes };
+}
+
+/** The order `listEvents` returns: soonest stored date first. */
+const byEventDate = (a: FamilyEvent, b: FamilyEvent) =>
+  a.eventDate.localeCompare(b.eventDate) || a.title.localeCompare(b.title);
+
+/**
+ * Insert and update in one, like `withTask`: both carry the whole row, so both
+ * mean "this is the date now". Re-sorted because the fetch order is by stored
+ * date and an edited one can move.
+ *
+ * The *display* order is not this: Home sorts occurrences by how soon they come
+ * round, which is a different question — an annual event stored in 2020 falls
+ * due before a one-off stored next month. `upcomingEvents` answers that one.
+ */
+function withEvent(state: LoadedFamily, event: FamilyEvent): LoadedFamily {
+  const index = state.events.findIndex((candidate) => candidate.id === event.id);
+
+  if (index === -1) return { ...state, events: [...state.events, event].sort(byEventDate) };
+  if (isSameRow(state.events[index], event)) return state;
+
+  const events = [...state.events];
+
+  events[index] = event;
+
+  return { ...state, events: events.sort(byEventDate) };
+}
+
+function withoutEvent(state: LoadedFamily, eventId: string): LoadedFamily {
+  const events = state.events.filter((event) => event.id !== eventId);
+
+  return events.length === state.events.length ? state : { ...state, events };
+}
+
+/**
  * What the announcement message says.
  *
  * It is the fallback as much as the label: once the 30-day sweep removes the
@@ -444,11 +642,14 @@ export function FamilyProvider({ children }: { children: ReactNode }) {
     // Note the `i18n` dependency below: the banner is stored as a *sentence*,
     // so switching language re-runs this and the message comes back translated
     // rather than frozen in whatever language it first failed in.
-    const [overview, messages, tasks, places] = await Promise.all([
+    const [overview, messages, tasks, places, polls, votes, events] = await Promise.all([
       getFamilyOverview(id),
       chatService.listMessages(id),
       taskService.listTasks(id),
       placesService.listPlaces(id),
+      pollService.listPolls(id),
+      pollService.listPollVotes(id),
+      eventsService.listEvents(id),
     ]);
 
     return {
@@ -458,8 +659,19 @@ export function FamilyProvider({ children }: { children: ReactNode }) {
       messages: messages.data ?? EMPTY_MESSAGES,
       tasks: tasks.data ?? EMPTY_TASKS,
       places: places.data ?? EMPTY_PLACES,
+      polls: polls.data ?? EMPTY_POLLS,
+      pollVotes: votes.data ?? EMPTY_VOTES,
+      events: events.data ?? EMPTY_EVENTS,
       // One banner is enough; the first failure is the one worth showing.
-      error: [overview.error, messages.error, tasks.error, places.error]
+      error: [
+        overview.error,
+        messages.error,
+        tasks.error,
+        places.error,
+        polls.error,
+        votes.error,
+        events.error,
+      ]
         .filter((failure) => failure !== null)
         .map((failure) => errorText(i18n, failure))[0] ?? null,
     };
@@ -568,6 +780,11 @@ export function FamilyProvider({ children }: { children: ReactNode }) {
       onLocationRemoved: (memberId) =>
         commit((previous) => withLocation(previous, memberId, null)),
       onProfile: (row) => commit((previous) => withProfile(previous, row)),
+      onPoll: (poll) => commit((previous) => withPoll(previous, poll)),
+      onPollVote: (vote) => commit((previous) => withVote(previous, vote)),
+      onPollVoteRemoved: (voteId) => commit((previous) => withoutVote(previous, voteId)),
+      onEvent: (event) => commit((previous) => withEvent(previous, event)),
+      onEventRemoved: (eventId) => commit((previous) => withoutEvent(previous, eventId)),
       // Nothing that happened while the socket was down is replayed, so a
       // rejoin is only a promise that events start again — the rows in between
       // have to be fetched.
@@ -794,6 +1011,125 @@ export function FamilyProvider({ children }: { children: ReactNode }) {
     [commit, familyId, i18n],
   );
 
+  /**
+   * Message first, poll second — the mirror image of `createTask`, and right
+   * for the mirror-image reason.
+   *
+   * `chat_polls.message_id` references the row, so the question has to exist
+   * before the poll can name it. That order is only safe because of what the
+   * message *is*: it carries the question itself, so a failure at the second
+   * step leaves somebody having asked their family a question in the chat,
+   * which is a weaker outcome rather than a broken one. `createTask` has to go
+   * the other way precisely because its message is an announcement, and an
+   * announcement about a task that was never created is a claim that is simply
+   * untrue.
+   *
+   * Each step commits as it lands, so a partial success is partially visible.
+   */
+  const createPoll = useCallback(
+    async (input: NewPoll): Promise<string | null> => {
+      if (!familyId) return i18n.t('errors.family.none');
+
+      const { data: message, error } = await chatService.sendMessage(familyId, input.question);
+
+      if (error) return errorText(i18n, error);
+
+      commit((previous) => withMessage(previous, message));
+
+      const { data: poll, error: pollError } = await pollService.createPoll({
+        familyId,
+        messageId: message.id,
+        question: input.question,
+        options: input.options,
+      });
+
+      if (pollError || !poll) {
+        // The question is in the chat and is already on screen above; only the
+        // card is missing. Say exactly that rather than implying nothing
+        // happened — the same shape `createTask`'s `notPosted` takes.
+        return i18n.t('errors.poll.notAttached');
+      }
+
+      commit((previous) => withPoll(previous, poll));
+
+      return null;
+    },
+    [commit, familyId, i18n],
+  );
+
+  /**
+   * Casting, changing and retracting are one call, because from the card they
+   * are one gesture: pressing an answer.
+   *
+   * Null means retract, and the *screen* decides that pressing the option you
+   * are already on means null — the same toggle rule `TaskStatusActions` owns
+   * for a task's status. Keeping the decision there and the write here is what
+   * stops two surfaces disagreeing about what a second press means.
+   *
+   * A retraction commits by `(pollId, memberId)` rather than by a row id,
+   * because the delete is scoped that way and this device never saw the id.
+   */
+  const votePoll = useCallback(
+    async (pollId: string, optionIndex: number | null): Promise<string | null> => {
+      if (!familyId) return i18n.t('errors.family.none');
+
+      const ownId = profile?.id;
+
+      if (!ownId) return i18n.t('errors.notAuthenticated');
+
+      if (optionIndex === null) {
+        const { error } = await pollService.retractVote(pollId);
+
+        if (error) return errorText(i18n, error);
+
+        commit((previous) => withoutOwnVote(previous, pollId, ownId));
+
+        return null;
+      }
+
+      const { data, error } = await pollService.castVote(familyId, pollId, optionIndex);
+
+      if (error) return errorText(i18n, error);
+
+      // The same reducer the channel uses, so this write and the socket's echo
+      // of it a moment later land as one vote in either order.
+      commit((previous) => withVote(previous, data));
+
+      return null;
+    },
+    [commit, familyId, i18n, profile?.id],
+  );
+
+  const createEvent = useCallback(
+    async (input: NewEvent): Promise<string | null> => {
+      if (!familyId) return i18n.t('errors.family.none');
+
+      const { data, error } = await eventsService.createEvent({ familyId, ...input });
+
+      if (error) return errorText(i18n, error);
+
+      // A local commit rather than a `refresh()`: the insert returned the
+      // stored row, and nothing else about the family moved.
+      commit((previous) => withEvent(previous, data));
+
+      return null;
+    },
+    [commit, familyId, i18n],
+  );
+
+  const deleteEvent = useCallback(
+    async (eventId: string): Promise<string | null> => {
+      const { error } = await eventsService.deleteEvent(eventId);
+
+      if (error) return errorText(i18n, error);
+
+      commit((previous) => withoutEvent(previous, eventId));
+
+      return null;
+    },
+    [commit, i18n],
+  );
+
   const removeMember = useCallback(
     async (memberId: string): Promise<string | null> => {
       const { error } = await removeMemberRequest(memberId);
@@ -925,6 +1261,9 @@ export function FamilyProvider({ children }: { children: ReactNode }) {
       messages: current?.messages ?? EMPTY_MESSAGES,
       tasks: current?.tasks ?? EMPTY_TASKS,
       places: current?.places ?? EMPTY_PLACES,
+      polls: current?.polls ?? EMPTY_POLLS,
+      pollVotes: current?.pollVotes ?? EMPTY_VOTES,
+      events: current?.events ?? EMPTY_EVENTS,
       currentMember: members.find((member) => member.id === profile?.id) ?? soloMember,
       getMember: (id) => (id ? members.find((member) => member.id === id) : undefined),
       isLoading: !!familyId && !current,
@@ -938,6 +1277,10 @@ export function FamilyProvider({ children }: { children: ReactNode }) {
       deleteMessage,
       setTaskStatus,
       createTask,
+      createPoll,
+      votePoll,
+      createEvent,
+      deleteEvent,
       removeMember,
       regenerateJoinCode,
       savePlace,
@@ -947,8 +1290,11 @@ export function FamilyProvider({ children }: { children: ReactNode }) {
     };
   }, [
     beginImage,
+    createEvent,
+    createPoll,
     createTask,
     current,
+    deleteEvent,
     deleteMessage,
     deletePlace,
     discardImage,
@@ -964,6 +1310,7 @@ export function FamilyProvider({ children }: { children: ReactNode }) {
     sendMessage,
     setOwnLocation,
     setTaskStatus,
+    votePoll,
   ]);
 
   return <FamilyContext.Provider value={value}>{children}</FamilyContext.Provider>;

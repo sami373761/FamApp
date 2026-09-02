@@ -509,6 +509,99 @@ export const en = {
 
   'avatar.a11y': '{{initials}} avatar',
 
+  // Battery, shown only while a member's position still reads as live.
+  'battery.percent': '{{percent}}%',
+  'battery.a11y': 'Battery {{percent}} percent',
+  'battery.a11yCharging': 'Battery {{percent}} percent, charging',
+
+  // The device-local switch that decides whether a charge level is written.
+  'profile.batterySharing': 'Share battery status',
+  'profile.batterySharingHint': 'Adds your charge level to the position you share. Your family sees it only while you are live.',
+  'profile.batterySharingDisabled': 'Turn location sharing on first — a charge level travels with your position.',
+
+  // The typed date field. The format is ISO in every language: it is what the
+  // `date` column stores, and 03/04/2026 means two different days.
+  'dateField.placeholder': 'YYYY-MM-DD',
+  'dateField.invalid': 'Enter a real date, as YYYY-MM-DD.',
+  'dateField.future': 'That day has not happened yet.',
+  'editProfile.birthDateLabel': 'Birthday',
+  'editProfile.birthDateHint': 'Optional. Your family sees a countdown to it on Home; left blank, nothing is shown.',
+
+  // Polls: the third row in the composer's + menu.
+  'chatActions.createPoll': 'Create poll',
+  'chatActions.createPollHint': 'Ask a question with two to four answers.',
+  'chatActions.createPollDisabled': 'You need a family to run a poll.',
+  'poll.composerTitle': 'New poll',
+  'poll.composerDescription': 'Two to four answers. Everyone in the family votes once.',
+  'poll.composerHint': 'The question is posted as your message, so deleting that message removes the poll.',
+  'poll.questionLabel': 'Question',
+  'poll.questionPlaceholder': 'What shall we have for dinner?',
+  'poll.optionLabel': 'Answer {{number}}',
+  'poll.optionPlaceholder': 'An answer',
+  'poll.addOption': 'Add an answer',
+  'poll.removeOption': 'Remove the last',
+  'poll.submit': 'Ask',
+  'poll.youAsked': 'You asked',
+  'poll.someoneAsked': '{{name}} asked',
+  'poll.noVotes': 'No votes yet',
+  'poll.voteCount': { one: '{{count}} vote', other: '{{count}} votes' } as PluralForms,
+  'poll.changeHint': 'Press again to undo',
+  'poll.percent': '{{percent}}%',
+  'poll.optionA11y': {
+    one: '{{count}} vote, {{percent}} percent',
+    other: '{{count}} votes, {{percent}} percent',
+  } as PluralForms,
+  'poll.moreVoters': { one: '+{{count}}', other: '+{{count}}' } as PluralForms,
+
+  // The five values `family_events_type_valid` allows.
+  'eventType.birthday': 'Birthday',
+  'eventType.anniversary': 'Anniversary',
+  'eventType.holiday': 'Holiday',
+  'eventType.trip': 'Trip',
+  'eventType.other': 'Other',
+
+  // Home's countdown card, and the sheet that manages it.
+  'events.title': 'Events & birthdays',
+  'events.subtitle': { one: '{{count}} coming up', other: '{{count}} coming up' } as PluralForms,
+  'events.subtitleEmpty': 'Nothing coming up',
+  'events.add': 'Add',
+  'events.loading': 'Loading your family’s dates…',
+  'events.emptyTitle': 'No dates yet',
+  'events.emptyBody': 'Add a birthday in Edit profile, or a shared date here.',
+  'events.emptyNoFamilyTitle': 'No family yet',
+  'events.emptyNoFamilyBody': 'Create or join a family to keep dates together.',
+  'events.today': 'Today',
+  'events.tomorrow': 'Tomorrow',
+  'events.inDays': { one: 'In {{count}} day', other: 'In {{count}} days' } as PluralForms,
+  'events.birthdayOf': '{{name}}’s birthday',
+  'events.turning': { one: 'Turning {{count}}', other: 'Turning {{count}}' } as PluralForms,
+  'events.yearsOn': { one: '{{count}} year on', other: '{{count}} years on' } as PluralForms,
+  'events.annual': 'Every year',
+  'events.once': 'Once only',
+  'events.removeHint': 'Press and hold to remove',
+  'events.composerTitle': 'New date',
+  'events.composerDescription': 'A day your whole family sees counted down.',
+  'events.titleLabel': 'What is it?',
+  'events.titlePlaceholder': 'Our anniversary',
+  'events.dateLabel': 'Date',
+  'events.typeLabel': 'Kind',
+  'events.annualLabel': 'Repeats every year',
+  'events.annualHint': 'It rolls forward to its next return.',
+  'events.onceHint': 'It passes once the day is gone.',
+  'events.submit': 'Add date',
+  'events.lockedTitle': 'Family calendar',
+  'events.lockedBody': {
+    one: 'Your family keeps {{count}} shared date. FamApp Gold lifts the limit.',
+    other: 'Your family keeps {{count}} shared dates. FamApp Gold lifts the limit.',
+  } as PluralForms,
+  'events.lockedBirthdays': 'Birthdays stay free for everyone — they come from each member’s own profile.',
+  'events.lockedUpgrade': 'See FamApp Gold',
+  'events.deleteTitle': 'Remove this date?',
+  'events.deleteBody': '“{{title}}” will be removed for everyone in the family.',
+  'events.deleteConfirm': 'Remove',
+  'premium.benefitEvents': 'A shared family calendar',
+  'premium.benefitEventsBody': 'A free family keeps 1 shared date. Gold keeps as many as you like. Birthdays are free for everyone.',
+
   /*
     Service failures. `services/` names the key and never the sentence, so the
     copy is resolved where the language is known — at render, in the screen. The
@@ -597,6 +690,26 @@ export const en = {
   'errors.task.notMember': 'You are not a member of this family.',
   'errors.task.notPosted': 'The task was created, but it could not be posted to the chat.',
   'errors.task.noteFailed': 'The task was created and posted, but your note could not be sent.',
+
+  'errors.location.batteryClearFailed': 'Your battery status could not be cleared.',
+
+  'errors.poll.questionEmpty': 'Give the poll a question.',
+  'errors.poll.questionTooLong': 'Keep the question to {{max}} characters.',
+  'errors.poll.optionsInvalid': 'A poll needs between {{min}} and {{max}} answers.',
+  'errors.poll.optionTooLong': 'Keep each answer to {{max}} characters.',
+  'errors.poll.notMember': 'You are not a member of this family.',
+  'errors.poll.loadFailed': 'Polls could not be loaded.',
+  'errors.poll.createFailed': 'That poll could not be created.',
+  'errors.poll.voteFailed': 'Your vote could not be saved.',
+  'errors.poll.notAttached': 'Your question was posted, but the poll could not be attached to it.',
+
+  'errors.event.titleTooLong': 'Give the date a name of up to {{max}} characters.',
+  'errors.event.dateInvalid': 'That date could not be read.',
+  'errors.event.limitReached': 'Your family keeps as many shared dates as its plan allows.',
+  'errors.event.notMember': 'You need to be in this family to add a date.',
+  'errors.event.loadFailed': 'Your family’s dates could not be loaded.',
+  'errors.event.saveFailed': 'That date could not be saved.',
+  'errors.event.notFound': 'That date is gone, or it is not yours to change.',
 
   /** The `system` message that announces a task in the chat. */
   'system.newTask': 'New task: “{{title}}”',

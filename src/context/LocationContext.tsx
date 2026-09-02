@@ -20,6 +20,14 @@
  *    fix is written whatever the distance, which restamps the row. At most one
  *    such write every two hours, so the battery rule survives it.
  *
+ * **The charge level rides along with a write and never causes one.** A phone
+ * dropping a percent is not news worth a round trip, and a tracker that
+ * reported every change would spend the battery it is reporting on. So the
+ * number every other member sees is exactly as old as the position under it —
+ * which is why the badge is rendered only while that position still reads as
+ * live, and why `batterySharing` is read through a ref rather than as a
+ * dependency of the cadence.
+ *
  * The baseline lives in a ref, not in storage: it is the position this *process*
  * last wrote and when the server stamped it, and after a restart the first fix
  * should write unconditionally rather than trust a number that may be hours old.
@@ -48,7 +56,12 @@ import { useAuth } from '@/hooks/useAuth';
 import { useFamily } from '@/hooks/useFamily';
 import { usePreferences } from '@/hooks/usePreferences';
 import { useTranslation } from '@/hooks/use-translation';
-import { getDevicePosition, updateOwnLocation } from '@/services/locationService';
+import {
+  getDeviceBattery,
+  getDevicePosition,
+  updateOwnLocation,
+  NO_BATTERY,
+} from '@/services/locationService';
 import { errorText } from '@/services/result';
 
 /** How often a foreground app takes a fix. */
@@ -94,6 +107,19 @@ export function LocationProvider({ children }: { children: ReactNode }) {
 
   const familyId = profile?.family_id ?? null;
   const canShare = preferences.locationSharing && !!familyId;
+  /**
+   * Read through a ref rather than taken as a dependency of `sync`.
+   *
+   * The switch is a *property of the next write*, not of the schedule: if it
+   * were in the dependency array, flipping it would rebuild `sync`, and the
+   * effect below would tear down the twelve-minute timer and start a fresh one
+   * — restarting the cadence, and firing an immediate fix, because somebody
+   * changed their mind about a badge. Profile already clears what is stored the
+   * moment the switch moves (`clearOwnBattery`), so nothing is waiting on this.
+   */
+  const shareBattery = useRef(preferences.batterySharing);
+
+  shareBattery.current = preferences.batterySharing;
 
   const [isSyncing, setIsSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -154,9 +180,18 @@ export function LocationProvider({ children }: { children: ReactNode }) {
           return;
         }
 
+        // Read only once the write is going ahead. Taking it beside the fix
+        // would spend a native call on every tick, most of which decide not to
+        // write at all — and a reading taken then discarded is one that would
+        // have been a few minutes stale by the time it mattered.
+        const battery = shareBattery.current ? await getDeviceBattery() : NO_BATTERY;
+
+        if (!mounted.current) return;
+
         const { data: stored, error: writeError } = await updateOwnLocation(
           familyId,
           position.data,
+          battery,
         );
 
         if (!mounted.current) return;

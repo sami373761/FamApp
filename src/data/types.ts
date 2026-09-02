@@ -24,6 +24,23 @@ export type MemberLocation = {
   longitude: number;
   /** ISO timestamp, server-stamped by the `locations_touch_updated_at` trigger. */
   updatedAt: string;
+  /**
+   * Charge percentage 0–100 at the moment this position was written, or null.
+   *
+   * Null is the answer rather than a gap: it is what a device that has switched
+   * `batterySharing` off writes, what the web target writes (no battery API),
+   * and what every row written before the column existed already holds. There
+   * is no "sharing" column to consult — the switch is device-local, exactly
+   * like `locationSharing`, so the absence of a reading *is* the refusal.
+   *
+   * **A number here is not permission to render one.** It ages with the row it
+   * rides on, so it may only be shown while that row is fresh enough to read as
+   * live — `presence === 'online'`. A percentage attached to an hour-old
+   * position looks current and is not, which is the one way this can lie.
+   */
+  batteryLevel: number | null;
+  /** Whether the device was plugged in when this was written; null when unshared. */
+  isCharging: boolean | null;
 };
 
 export type FamilyMember = {
@@ -41,6 +58,17 @@ export type FamilyMember = {
   avatar: AvatarConfig | null;
   role: FamilyRole | null;
   isAdmin: boolean;
+  /**
+   * `YYYY-MM-DD`, or null until they give one. A `date` column, so there is no
+   * time and no zone — an anniversary is a day, not an instant.
+   *
+   * The whole of the birthday countdown on Home: `src/data/events.ts` folds it
+   * against the roster rather than reading a birthday row, because there is no
+   * such row and a stored copy would go stale the moment somebody corrected
+   * their date. Null members simply have no occurrence, which is the honest
+   * outcome and needs no placeholder.
+   */
+  birthDate: string | null;
   /** `profiles.created_at` — when the account was made. */
   createdAt: string;
   /** Their row in `locations`, or null when they share nothing. */
@@ -186,5 +214,81 @@ export type SavedPlace = {
   title: string;
   latitude: number;
   longitude: number;
+  createdAt: string;
+};
+
+/**
+ * A question asked in the family chat, with the answers counted where it was
+ * asked.
+ *
+ * Hangs off the `messages` row whose content *is* the question — the same shape
+ * a task takes with `source_message_id`, and for the same reason: losing the
+ * poll leaves a readable line of chat rather than a hole. The difference is
+ * which message it names. A task names FamApp's own announcement, because a
+ * member's line is theirs and must not be redrawn as a card; a poll names the
+ * member's line, because the question is what they actually said.
+ *
+ * `options` is between two and four strings, and it is never edited after the
+ * insert — a vote is a *position* in this array, so re-ordering or re-wording
+ * one would silently re-label answers people had already given. There is no
+ * update policy on the table for exactly that reason.
+ */
+export type ChatPoll = {
+  id: string;
+  /** The message this poll is drawn in place of. Unique per poll. */
+  messageId: string;
+  question: string;
+  /** Two to four answers, in the order they are shown and voted on. */
+  options: string[];
+  createdById: string;
+  createdAt: string;
+};
+
+/**
+ * One member's answer to one poll. No row means they have not voted — there is
+ * no abstain value, because `unique (poll_id, user_id)` makes not-voting the
+ * absence of a row and the tally already renders that.
+ */
+export type PollVote = {
+  id: string;
+  pollId: string;
+  memberId: string;
+  /** Index into that poll's `options`. */
+  optionIndex: number;
+  createdAt: string;
+};
+
+/**
+ * Mirrors the `family_events_type_valid` check constraint.
+ *
+ * Closed for the same reason `PlaceCategory` is: every value has to resolve to
+ * an icon and a label, and an unknown one would reach a screen with neither.
+ */
+export type FamilyEventType = 'birthday' | 'anniversary' | 'holiday' | 'trip' | 'other';
+
+/**
+ * A date the family entered by hand.
+ *
+ * **Birthdays are not in here.** A member's birthday is derived from
+ * `profiles.birth_date` and folded into the same countdown list by
+ * `src/data/events.ts` — a stored copy would go stale the moment somebody
+ * corrected their date, and would double every birthday for a member the roster
+ * already carries. That split is also where the tier boundary falls: birthdays
+ * are a fold over rows every member can read and stay free, while these are the
+ * dates that exist only because somebody typed them.
+ *
+ * `eventDate` is a calendar date (`YYYY-MM-DD`), not a timestamp: an
+ * anniversary is a day rather than an instant, and giving it a zone would move
+ * it for whoever is reading from another one.
+ */
+export type FamilyEvent = {
+  id: string;
+  title: string;
+  /** `YYYY-MM-DD`. A `date` column, so there is no time and no zone. */
+  eventDate: string;
+  eventType: FamilyEventType;
+  /** Whether the date recurs each year; a one-off simply passes. */
+  isAnnual: boolean;
+  createdById: string;
   createdAt: string;
 };

@@ -1,5 +1,6 @@
 /**
- * Device-local settings: appearance, language, notifications, location sharing.
+ * Device-local settings: appearance, language, notifications, location and
+ * battery sharing.
  *
  * None of these have a column. `profiles` carries identity and membership and
  * nothing else, and inventing a settings column to back a switch would be the
@@ -9,14 +10,17 @@
  * device rather than of the person. A second device deliberately starts from
  * the defaults.
  *
- * Two of them have a server-side consequence, and neither flag is the whole
- * truth on its own. Turning location sharing off also deletes the caller's
+ * Three of them have a server-side consequence, and no flag is the whole truth
+ * on its own. Turning location sharing off also deletes the caller's
  * `locations` row (`locationService.clearOwnLocation`), because a stale pin
  * left behind would keep showing on everyone else's map. Turning notifications
  * on registers this device and stores its Expo push token on the profile row;
- * turning it off clears the token (`notificationService`). Both switches are
- * reverted by the screen if their write fails — a flag that claims more privacy,
- * or more delivery, than there is would be worse than no flag.
+ * turning it off clears the token (`notificationService`). Turning battery
+ * sharing off blanks the two battery columns on that same `locations` row, for
+ * the same reason: a charge level left behind would keep being read as current.
+ * All three switches are reverted by the screen if their write fails — a flag
+ * that claims more privacy, or more delivery, than there is would be worse than
+ * no flag.
  *
  * Hydration is deliberately *not* gated. Reading one AsyncStorage key finishes
  * well inside the splash `RootNavigator` already shows while the stored session
@@ -60,6 +64,26 @@ export type Preferences = {
   notifications: boolean;
   locationSharing: boolean;
   /**
+   * Whether this device attaches its charge level to the positions it writes.
+   *
+   * Device-local, and it has to be: there is no column that could record the
+   * *intent*, only the reading itself — so switching this off writes NULL into
+   * `locations.battery_level` / `battery_charging` and the absence of a number
+   * is the whole of the refusal. That is the same shape `locationSharing` takes
+   * one step further along: that one deletes the row, this one blanks two of
+   * its columns.
+   *
+   * Separate from `locationSharing` rather than folded into it because they
+   * answer different questions. Where you are is a fact about the family;
+   * whether your phone is about to die is a fact about your phone, and somebody
+   * may reasonably want the family to have the first without the second.
+   *
+   * Defaults to true, like the other two shares: the app is a family locator,
+   * and "my phone is on 4%" is the most useful thing it can add to a pin that
+   * has stopped moving. It is one switch away in Profile either way.
+   */
+  batterySharing: boolean;
+  /**
    * The id of the user who chose to open the app without a family, or null.
    *
    * An id rather than a boolean because this device outlives the session: a
@@ -91,6 +115,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   language: 'system',
   notifications: true,
   locationSharing: true,
+  batterySharing: true,
   familySetupSkippedFor: null,
 };
 
@@ -145,6 +170,10 @@ function parsePreferences(raw: string | null): Preferences {
       typeof value.locationSharing === 'boolean'
         ? value.locationSharing
         : DEFAULT_PREFERENCES.locationSharing,
+    batterySharing:
+      typeof value.batterySharing === 'boolean'
+        ? value.batterySharing
+        : DEFAULT_PREFERENCES.batterySharing,
     familySetupSkippedFor:
       typeof value.familySetupSkippedFor === 'string' && value.familySetupSkippedFor
         ? value.familySetupSkippedFor

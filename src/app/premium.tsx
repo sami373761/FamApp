@@ -194,8 +194,16 @@ export default function PremiumScreen() {
         </View>
 
         {/* The badge is the fastest read on the screen: it says which of the
-            three faces this is before any sentence has been parsed. */}
-        {isPremium ? <Badge label={t('premium.activeBadge')} tone="warning" /> : null}
+            three faces this is before any sentence has been parsed — so it
+            belongs on the hero's own centre line, under the mark, rather than
+            adrift at the left edge. `Badge` pins itself `flex-start` so it
+            cannot stretch in a column, which is exactly what put it there; the
+            wrapper takes the hero's centring back. */}
+        {isPremium ? (
+          <View style={styles.heroBadge}>
+            <Badge label={t('premium.activeBadge')} tone="warning" />
+          </View>
+        ) : null}
 
         <Text variant="title" center>
           {isPremium
@@ -250,6 +258,21 @@ export default function PremiumScreen() {
           icon="albums"
           title={t('premium.benefitTasks')}
           description={t('premium.benefitTasksBody')}
+        />
+        {/*
+          The sixth, and the only claim on this screen with no number in it.
+          That is allowed here and nowhere else: `check_family_event_limit()`
+          genuinely stops counting on Gold, so "as many as you like" is a fact
+          about the trigger rather than the sort of promise "unlimited saved
+          places" and "30-day history" were when they were removed. The body
+          still names the free tier's 1, and still says what stays free — a
+          birthday is folded out of `profiles.birth_date` and costs the schema
+          nothing, so it is not Gold's to sell.
+        */}
+        <BenefitRow
+          icon="calendar"
+          title={t('premium.benefitEvents')}
+          description={t('premium.benefitEventsBody')}
         />
         <BenefitRow
           icon="notifications"
@@ -371,6 +394,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginBottom: Spacing.xs,
   },
+  heroBadge: { alignItems: 'center', marginBottom: Spacing.xs },
   benefits: { gap: Spacing.lg, marginTop: Spacing.xl },
   plans: { gap: Spacing.md, marginTop: Spacing.xl },
   cta: { marginTop: Spacing.xl },
