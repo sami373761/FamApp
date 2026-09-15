@@ -519,6 +519,7 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      own_push_token: { Args: never; Returns: string }
       regenerate_join_code: { Args: never; Returns: string }
       remove_member: { Args: { p_member_id: string }; Returns: undefined }
       reset_daily_photo_counts: { Args: never; Returns: number }

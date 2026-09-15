@@ -40,11 +40,13 @@
  * `CANCELLED` code, would have every caller writing a branch that suppresses an
  * "error" the user caused on purpose.
  *
- * Nothing here decides who is *allowed* to send a photo. The Gold gate is the
- * chat sheet's, and it is a UI courtesy in exactly the way `canActOnTask` is:
- * `messages: send as self` does not read the family's tier, so a photo message
- * from a free family would be accepted by the database. Making the gate real
- * means a trigger reading `private.is_family_premium()`, not a change here.
+ * Nothing here decides who is *allowed* to send a photo, and deliberately so.
+ * The gate is on the **message**, not the object: `chat-media: upload to own
+ * path` still accepts bytes from a free family, and
+ * `private.enforce_media_message_tier()` (20260903100000) then rejects the row
+ * that would have pointed at them. Uploading is not sharing — the message is
+ * what the family can see — and an object nothing points at is exactly what
+ * `cleanup-media` already sweeps.
  */
 
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';

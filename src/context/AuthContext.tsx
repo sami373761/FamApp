@@ -11,7 +11,7 @@ import { createContext, useCallback, useEffect, useMemo, useState, type ReactNod
 
 import * as authService from '@/services/authService';
 import type { AuthResult, SignUpOutcome } from '@/services/authService';
-import type { ProfileRow } from '@/services/familyService';
+import { PROFILE_COLUMNS, type ProfileRow } from '@/services/familyService';
 import { supabase } from '@/services/supabase';
 
 export type AuthContextValue = {
@@ -83,7 +83,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const fetchProfile = useCallback(async (id: string): Promise<ProfileRow | null> => {
-    const { data, error } = await supabase.from('profiles').select('*').eq('id', id).maybeSingle();
+    const { data, error } = await supabase
+      .from('profiles')
+      .select(PROFILE_COLUMNS)
+      .eq('id', id)
+      .maybeSingle();
 
     // A read failure is not a signed-out state; keep the session and report no
     // profile so the UI can retry rather than bouncing the user to sign-in.

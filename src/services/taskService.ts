@@ -24,7 +24,13 @@ import { supabase } from '@/services/supabase';
 
 type TaskRow = Database['public']['Tables']['tasks']['Row'];
 
-export type TaskErrorCode = CommonErrorCode | 'TOO_MANY_ACTIVE' | 'INVALID_TITLE' | 'NOT_A_MEMBER';
+export type TaskErrorCode =
+  | CommonErrorCode
+  | 'TOO_MANY_ACTIVE'
+  | 'INVALID_TITLE'
+  | 'NOT_A_MEMBER'
+  /** The task names somebody else, and this caller is not an admin. */
+  | 'NOT_ASSIGNEE';
 
 export type TaskServiceError = ServiceError<TaskErrorCode>;
 export type TaskResult<T> = ServiceResult<T, TaskErrorCode>;
@@ -58,6 +64,12 @@ function toServiceError(error: PostgrestError): TaskServiceError {
   const message = error.message ?? '';
   const cause = error;
 
+  // Before the ceiling below, which keys on the broader /task/i. Both of
+  // `private.guard_task_assignment()`'s sentences are written for a human and
+  // pass through as the server's own text, exactly like the ceiling's.
+  if (error.code === 'P0001' && /assigned|moved/i.test(message)) {
+    return errorFrom('NOT_ASSIGNEE', { text: message }, cause);
+  }
   if (error.code === 'P0001' && /task/i.test(message)) {
     // "This family already has 20 active tasks" — the database wrote it for
     // humans, so it passes through as text and stays English. Translating it

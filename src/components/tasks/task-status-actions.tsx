@@ -8,13 +8,16 @@
  * say done or not done and had no way to show that somebody had picked
  * something up.
  *
- * **Who may press them is a UI rule, not a security boundary.** The database's
- * `tasks: family updates` policy is deliberately family-wide — its comment
- * reads "any member may claim, hand over or complete any task in their family"
- * — so a member who is not the assignee is *stopped here and nowhere else*.
- * Making it a real constraint means narrowing that policy in a migration; until
- * then this is an affordance that keeps people out of each other's work, and
- * should not be described as more than that.
+ * **Who may press them is enforced server-side too**, which it was not for a
+ * long time. `tasks: family updates` is still family-wide by *row* — the policy
+ * cannot see OLD and NEW together, and `linkTaskToMessage` legitimately writes
+ * `source_message_id` onto somebody else's task — but
+ * `private.guard_task_assignment()` (20260903100000) refuses a change to
+ * `status` or `assigned_to` on an assigned task from anyone except the
+ * assignee, a family admin or the family creator. So this function and that
+ * trigger are one rule with two spellings and must stay in step: what changes
+ * here has to change there, or the buttons will offer a write the database
+ * rejects.
  */
 
 import { Ionicons } from '@expo/vector-icons';

@@ -7,12 +7,12 @@
  * non-admin, and the reason is the same one — a control that vanishes explains
  * nothing, and the boundary is best stated where the action is.
  *
- * **The lock is a UI rule, exactly like `canActOnTask`.** `messages: send as
- * self` does not read `families.is_premium`, and neither does the `chat-media`
- * upload policy, so a free family's photo would be accepted by the database.
- * This row is a sales surface, not enforcement; making it real means a trigger
- * reading `private.is_family_premium()`. Do not build anything on top of it
- * that assumes it holds.
+ * **The lock is explanation, and `private.enforce_media_message_tier()`
+ * (20260903100000) is enforcement.** That BEFORE INSERT trigger rejects an
+ * `image` row from a family without an unexpired Gold grant, so walking around
+ * this row gets a refusal rather than a photo. What the padlock adds is the
+ * *reason*, and a way to act on it: a refused insert after the picker, the
+ * confirmation and the upload is a worse way to learn the same fact.
  *
  * Content only, no `Sheet` of its own: Chat shows this, the message menu and
  * the task form in the same sheet, because presenting one native modal while

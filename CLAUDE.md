@@ -389,7 +389,7 @@ so "Shuffle" swaps to something already cached instead of blanking the circle.
 
 **A task has two actions, and every surface shares them.** `TaskStatusActions` (`src/components/tasks/task-status-actions.tsx`) is the pair of buttons — "In progress" and "Done" — rendered by *both* `TaskCard` on the Tasks tab and `TaskMessageCard` in the chat stream, so the same press means the same write wherever a task is being looked at. Pressing the state a task is already in clears it back to `pending`, which is what makes the pair a toggle rather than a one-way trip; `expired` is offered nothing, because it is the retention sweep's verdict rather than a state anyone chose. The single checkbox both cards used to carry is **gone**: it could only ever say two of the three states, and no version of it could show that somebody had picked a task up.
 
-**Who may press them is a UI rule and nothing more.** `canActOnTask(task, userId)` allows the assignee, and allows anyone when `assigneeId` is null — an unassigned task is the pool. But `tasks: family updates` is deliberately family-wide, its own migration comment reading "any member may claim, hand over or complete any task in their family", so a non-assignee is stopped **in the client and nowhere else**. Do not describe this as enforcement, and do not build anything on top of it that assumes it holds; making it real means narrowing that policy in a migration. A locked card dims its buttons and names whose task it is rather than hiding them, because a control that vanishes explains nothing.
+**Who may press them is enforced on both sides now.** `canActOnTask(task, userId)` allows the assignee, and allows anyone when `assigneeId` is null — an unassigned task is the pool. `tasks: family updates` is still family-wide *by row*, because `linkTaskToMessage` has to write `source_message_id` onto a task the caller may not be assigned to; what narrowed is which **columns** a non-assignee may change. `private.guard_task_assignment()` (`20260903100000_server_side_enforcement.sql`) refuses a change to `status` or `assigned_to` on an assigned task from anyone but the assignee, a family admin or the family creator, and refuses a `handled_by` naming somebody other than the caller. It is a BEFORE UPDATE trigger rather than a policy because the rule is about OLD versus NEW, which a `using` clause cannot see. It is SECURITY **INVOKER** on purpose — it reads `current_user` to exempt `postgres`/`service_role`, and a definer body would report the owner for every caller and pass the check for everyone. A locked card dims its buttons and names whose task it is rather than hiding them, because a control that vanishes explains nothing; the refusal arrives as `NOT_ASSIGNEE` carrying the server's own sentence.
 
 **Swiping survives as the shortcut it always was.** `SwipeToComplete` (`src/components/tasks/`) wraps `TaskCard` and pulls it right to reveal a `successSoft` track; past the threshold on release it writes `completed` — the same write the "Done" button makes. It is built on RN's own responder props plus `Animated` — there is no gesture library in this project, and `Animated` is the whole of its animation layer — and it claims the gesture only for a clearly sideways, rightward drag so the task list still scrolls. It is offered only on an open task whose write is not already in flight **and which `canActOnTask` allows this viewer to move**, so a pull can neither un-do a finished task nor finish somebody else's; the card springs back rather than vanishing, because whether it moves to the Completed section is the database's answer.
 
@@ -568,14 +568,19 @@ the bubble, so calling it directly would pin the first render's closure forever.
 work on desktop web** — there is no second touch — which is exactly why double-tap zoom exists
 rather than being a convenience on top of pinch.
 
-**The Gold gate is client-side and nothing else**, exactly like `canActOnTask`. `messages: send as
-self` does not read `families.is_premium`, and neither does the upload policy, so a free family's
-photo *would* be accepted by the database. `ChatActionsList` reads `useFamily().isPremium` and
+**The Gold gate is enforced by a trigger, and the padlock is what explains it.**
+`private.enforce_media_message_tier()` (`20260903100000_server_side_enforcement.sql`) is a BEFORE
+INSERT trigger on `messages` that rejects an `image` row from a family without an unexpired Gold
+grant — the `private.is_family_premium()` reading that `check_saved_place_limit()` already uses. It
+is INSERT-only, so a lapsed grant never takes away photos already sent; the 10-day sweep collects
+them in its own time. `chat-media: upload to own path` is deliberately **not** narrowed: uploading
+is not sharing, the message is what the family can see, and an object nothing points at is what
+`cleanup-media` already exists to collect. `ChatActionsList` reads `useFamily().isPremium` and
 gives the row a padlock, the `warning` Gold badge and "FamApp Gold required"; pressing it pushes
-`/premium` instead of opening the picker. Do not describe this as enforcement, and do not build on
-it — making it real means a trigger reading `private.is_family_premium()`. **No family outranks
-the tier**: `messages.family_id` is `not null`, so a solo user gets "create or join a family"
-rather than a paywall for something that still would not work.
+`/premium` instead of opening the picker, so the trigger is only ever reached by a direct API call
+— and when it is, `chatService` maps it to `PREMIUM_REQUIRED` and shows the server's sentence.
+**No family outranks the tier**: `messages.family_id` is `not null`, so a solo user gets "create or
+join a family" rather than a paywall for something that still would not work.
 
 **Picking is not sending.** The flow is **pick → confirm → compress → upload → post**, and the
 confirmation step in the middle is the whole reason the service splits `pickImage` from
@@ -788,14 +793,27 @@ in Expo Go and the browser, so **the switch cannot currently succeed on any targ
 That is not a bug to paper over; it reverts and names itself, and a development build from an
 `eas init`'d project is what changes it.
 
-`profiles.push_token` (`20260825120000_push_tokens.sql`) carries one caveat worth repeating: the
-`profiles: read own and family` policy is family-wide and the grants are table-level, so **every
-member of your family can read your push token**, which is a send capability. The write side *is*
-closed — `guard_profile_columns()` gained a clause rejecting a token written onto anyone else's row,
-which the `profiles: admin updates members` policy would otherwise permit. Close the read side
-(column privileges plus explicit column lists in `familyService`, or a separate `push_tokens` table)
-before this faces real users — that caveat was cheap while nothing read the column, and the
-sender below is what starts spending it.
+`profiles.push_token` (`20260825120000_push_tokens.sql`) carried one caveat for a long time — the
+`profiles: read own and family` policy is family-wide and the grants were table-level, so every
+member of your family could read your push token, which is a send capability — and
+`20260903100000_server_side_enforcement.sql` closed it by the first of the two routes that
+migration's header named. The table-level SELECT grant is **dropped and re-granted per column**,
+every column except `push_token`; a column-level REVOKE cannot subtract from a table-level grant,
+so that order is the only way to say "all but this one". `service_role` is untouched, which is what
+`send-push` runs as, and the owner's own read survives as `public.own_push_token()` — a SECURITY
+DEFINER scalar nothing in the app calls today, because `notificationService` writes the token and
+deliberately never reads it back. The write side was already closed by
+`guard_profile_columns()`.
+
+**The cost is that `select *` on `profiles` is now a permission error for `authenticated`**, since
+the expansion names a column the role cannot read. `PROFILE_COLUMNS` in `familyService` is the one
+list the three call sites share (`AuthContext.fetchProfile`, `getFamilyOverview`'s embed,
+`updateOwnProfile`'s `RETURNING`), and `ProfileRow` is `Omit<Row<'profiles'>, 'push_token'>` so
+nothing can be written against a column that will never arrive. **Adding a column to `profiles`
+means adding it to the grant in that migration and to `PROFILE_COLUMNS`** — forgotten in the
+constant it is invisible, forgotten in the grant it is a failed query. The `as const` on both that
+constant and on `FAMILY_WITH_MEMBERS` is load-bearing: supabase-js infers a response's shape from
+the *type* of the select string, and a widened `string` takes the generated types with it.
 
 #### The push sender
 
@@ -947,15 +965,16 @@ what branches by tier, offering the upgrade to a free family and not to a Gold o
 in `src/data/premium.ts` is the client half, folded into `FamilyContext`'s `memberLimit` beside
 `isPremium` and read by both counters (Profile's row, the Members screen's line) in place of
 `family.maxMembers` — the same client-explains / server-decides split `placeLimitFor` has.
-The task trigger still counts 20 active per *family* rather than per member, and chat photos are
-built but gated in the client alone. Making either real means the same narrowed trigger reading
+Chat photos joined them in `20260903100000_server_side_enforcement.sql`. The one benefit left as
+copy is the active-task ceiling: the trigger still counts 20 per *family* rather than 2/10 per
+member, and making it real means the same narrowed trigger reading
 `private.is_family_premium()`, not a copy change.
 
 | Benefit | Free | Gold | Enforced? |
 | --- | --- | --- | --- |
 | Family members | 5 | 10 | **yes** — `enforce_family_member_limit()` |
 | Saved places **per family** | 2 | 10 | **yes** — `check_saved_place_limit()` |
-| Group chat photos | text only | photo sharing | no — **client-side only** |
+| Group chat photos | text only | photo sharing | **yes** — `enforce_media_message_tier()` |
 | Active tasks **per member** | 2 | 10 | no — 20 per family |
 | Saved-place arrival/departure | in-app only | push notifications | **yes** — `notify_on_geofence()` |
 

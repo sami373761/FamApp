@@ -39,7 +39,9 @@ export type ChatErrorCode =
   | 'EMPTY_MESSAGE'
   | 'NOT_A_MEMBER'
   /** A delete matched no row: not the caller's message, or already gone. */
-  | 'NOT_ALLOWED';
+  | 'NOT_ALLOWED'
+  /** An `image` row from a family without an unexpired Gold grant. */
+  | 'PREMIUM_REQUIRED';
 
 export type ChatServiceError = ServiceError<ChatErrorCode>;
 export type ChatResult<T> = ServiceResult<T, ChatErrorCode>;
@@ -58,6 +60,12 @@ function toServiceError(error: PostgrestError): ChatServiceError {
 
   if (/messages_content_length/.test(message)) {
     return errorFrom('TOO_LONG', { key: 'errors.chat.tooLong', vars: { max: MAX_MESSAGE_LENGTH } }, cause);
+  }
+  // `private.enforce_media_message_tier()`. The chat "+" menu padlocks the row
+  // long before this, so reaching it means the client gate was walked around —
+  // the server's sentence is the honest thing to show.
+  if (error.code === 'P0001' && /FamApp Gold/i.test(message)) {
+    return errorFrom('PREMIUM_REQUIRED', { text: message }, cause);
   }
   if (error.code === '42501' || /row-level security/i.test(message)) {
     return errorFrom('NOT_A_MEMBER', 'errors.chat.notMember', cause);

@@ -34,7 +34,34 @@ import { supabase } from '@/services/supabase';
 type Row<T extends keyof Database['public']['Tables']> = Database['public']['Tables'][T]['Row'];
 
 export type FamilyRow = Row<'families'>;
-export type ProfileRow = Row<'profiles'>;
+
+/**
+ * Every column of `profiles` except `push_token`, which
+ * `20260903100000_server_side_enforcement.sql` revoked from `authenticated`:
+ * the grant is now per column, so `select *` is a permission error rather than
+ * a row with one field missing.
+ *
+ * It is a literal rather than a join over a list, because supabase-js infers
+ * the shape of a response from the *type* of the select string — a value it
+ * cannot read at compile time widens the result to `any` and takes the whole
+ * point of the generated types with it.
+ *
+ * **Adding a column to `profiles` means adding it here and to the grant in that
+ * migration**, in that order of consequence: forgotten here it is invisible to
+ * the app, forgotten there it is a failed query.
+ */
+export const PROFILE_COLUMNS =
+  'id, family_id, display_name, role, avatar_config, color_index, is_admin, daily_photo_count, birth_date, created_at' as const;
+
+/**
+ * A profile as the app is allowed to see it.
+ *
+ * `push_token` is deliberately absent: no member may read another's, the owner
+ * reads their own through `own_push_token()`, and nothing in the app reads one
+ * at all. Omitting it from the type is what stops a screen being written
+ * against a column that will never arrive.
+ */
+export type ProfileRow = Omit<Row<'profiles'>, 'push_token'>;
 
 /** Everything the tabs need about who is in the family. */
 export type FamilyOverview = {
@@ -182,6 +209,12 @@ export function toFamilyMember(row: ProfileRow, location: MemberLocation | null)
 }
 
 /**
+ * `as const` is load-bearing: a plain template expression widens to `string`,
+ * and supabase-js then has no literal to infer the row shape from.
+ */
+const FAMILY_WITH_MEMBERS = `*, members:profiles(${PROFILE_COLUMNS})` as const;
+
+/**
  * The family, its members and everyone's last known position.
  *
  * Locations are a separate query rather than an embedded one: the map refreshes
@@ -192,7 +225,7 @@ export function toFamilyMember(row: ProfileRow, location: MemberLocation | null)
 export async function getFamilyOverview(familyId: string): Promise<FamilyResult<FamilyOverview>> {
   return guarded(async () => {
     const [familyResponse, locationsResult] = await Promise.all([
-      supabase.from('families').select('*, members:profiles(*)').eq('id', familyId).single(),
+      supabase.from('families').select(FAMILY_WITH_MEMBERS).eq('id', familyId).single(),
       listLocations(familyId),
     ]);
 
@@ -329,7 +362,7 @@ export async function updateOwnProfile(patch: {
         ...(patch.birthDate === undefined ? {} : { birth_date: patch.birthDate }),
       })
       .eq('id', auth.user.id)
-      .select()
+      .select(PROFILE_COLUMNS)
       .single();
 
     if (error) return failWith(error);
