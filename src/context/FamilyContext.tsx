@@ -812,7 +812,12 @@ export function FamilyProvider({ children }: { children: ReactNode }) {
 
   const beginImage = useCallback(
     (messageId: string, localUri: string, caption?: string | null): void => {
-      if (!familyId || !profile?.id) return;
+      // Read once into a local: narrowing `profile?.id` and then reading it
+      // back off `profile` is what makes React Compiler infer `profile` as the
+      // dependency and give up on memoising this provider.
+      const senderId = profile?.id;
+
+      if (!familyId || !senderId) return;
 
       // The local clock, which is the one thing here the server will disagree
       // with — `created_at` is stamped `now()` on insert. It only has to be
@@ -821,7 +826,7 @@ export function FamilyProvider({ children }: { children: ReactNode }) {
       commit((previous) =>
         withMessage(previous, {
           id: messageId,
-          senderId: profile.id,
+          senderId,
           type: 'image',
           // Trimmed to null the same way `sendImageMessage` will trim it, so
           // the placeholder and the row it becomes say the same thing.

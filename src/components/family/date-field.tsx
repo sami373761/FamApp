@@ -93,6 +93,15 @@ export function DateField({
   const [text, setText] = useState(value);
 
   const parsed = parseDateOnly(text);
+  /*
+    `Date.now()` during render is an impurity, and the rule is right that it is
+    one — but "is this date in the future" has no answer that is not read off
+    the clock, and the alternatives are worse: a value captured at mount goes
+    stale in a field somebody is still typing into, and an effect would only
+    move the same read one commit later. The cost of being wrong is a validation
+    message that is a millisecond out of date.
+  */
+  // eslint-disable-next-line react-hooks/purity
   const isFuture = !!parsed && disallowFuture && parsed.getTime() > Date.now();
   // Only complain once they have plainly finished: mid-keystroke every value is
   // "invalid", and saying so on the third character is nagging rather than

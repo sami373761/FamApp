@@ -105,9 +105,9 @@ export function ImageViewer({ visible, url, path, label, onClose }: ImageViewerP
    * the values are only ever written to. They are kept in step by being set
    * together, which is why every commit below goes through `apply`.
    */
-  const scale = useRef(new Animated.Value(MIN_SCALE)).current;
-  const offsetX = useRef(new Animated.Value(0)).current;
-  const offsetY = useRef(new Animated.Value(0)).current;
+  const [scale] = useState(() => new Animated.Value(MIN_SCALE));
+  const [offsetX] = useState(() => new Animated.Value(0));
+  const [offsetY] = useState(() => new Animated.Value(0));
 
   const state = useRef({
     scale: MIN_SCALE,
@@ -123,7 +123,7 @@ export function ImageViewer({ visible, url, path, label, onClose }: ImageViewerP
     tapX: 0,
     tapY: 0,
     lastTapAt: 0,
-  }).current;
+  });
 
   const tapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -138,7 +138,9 @@ export function ImageViewer({ visible, url, path, label, onClose }: ImageViewerP
    */
   const closeRef = useRef(onClose);
 
-  closeRef.current = onClose;
+  useEffect(() => {
+    closeRef.current = onClose;
+  }, [onClose]);
 
   const cancelTapTimer = () => {
     if (tapTimer.current) {
@@ -152,9 +154,9 @@ export function ImageViewer({ visible, url, path, label, onClose }: ImageViewerP
   const apply = useMemo(
     () =>
       (next: { scale: number; x: number; y: number }, animated: boolean) => {
-        state.scale = next.scale;
-        state.x = next.x;
-        state.y = next.y;
+        state.current.scale = next.scale;
+        state.current.x = next.x;
+        state.current.y = next.y;
 
         if (!animated) {
           scale.setValue(next.scale);
@@ -179,38 +181,49 @@ export function ImageViewer({ visible, url, path, label, onClose }: ImageViewerP
   useEffect(() => {
     if (!visible) return;
 
+    // Not lifted into the render phase the way `ChatImage`'s reset was: this
+    // one has to happen alongside `apply`, which drives `Animated` and so can
+    // only run after the commit. Splitting it would put one reset in two places.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setIsLoading(true);
     apply({ scale: MIN_SCALE, x: 0, y: 0 }, false);
-    state.lastTapAt = 0;
+    state.current.lastTapAt = 0;
 
     return cancelTapTimer;
   }, [apply, state, visible, url]);
 
   useEffect(() => cancelTapTimer, []);
 
+  /*
+    The `.current` reads below are all inside handlers, which run when a finger
+    moves rather than while rendering — but the rule sees only that they sit in
+    a `useMemo` body. See `Sheet`, which builds its responder the same way and
+    for the same reason.
+  */
   const responder = useMemo(
     () =>
+      // eslint-disable-next-line react-hooks/refs
       PanResponder.create({
         // Claimed on touch-down so a tap is seen at all; a drag that should
         // scroll something else has nothing to compete with here, since the
         // viewer is the whole surface.
         onStartShouldSetPanResponder: () => true,
         onMoveShouldSetPanResponder: (_event, gesture) =>
-          state.scale > MIN_SCALE || gesture.numberActiveTouches === 2,
+          state.current.scale > MIN_SCALE || gesture.numberActiveTouches === 2,
         onPanResponderTerminationRequest: () => false,
 
         onPanResponderGrant: (event) => {
           cancelTapTimer();
 
-          state.startScale = state.scale;
-          state.startX = state.x;
-          state.startY = state.y;
-          state.pinchDistance = 0;
+          state.current.startScale = state.current.scale;
+          state.current.startX = state.current.x;
+          state.current.startY = state.current.y;
+          state.current.pinchDistance = 0;
 
           const touch = event.nativeEvent.touches[0];
 
-          state.tapX = touch?.pageX ?? 0;
-          state.tapY = touch?.pageY ?? 0;
+          state.current.tapX = touch?.pageX ?? 0;
+          state.current.tapY = touch?.pageY ?? 0;
         },
 
         onPanResponderMove: (event, gesture) => {
@@ -224,39 +237,39 @@ export function ImageViewer({ visible, url, path, label, onClose }: ImageViewerP
 
             // The second finger may land mid-gesture, so the baseline is taken
             // on the first two-touch frame rather than at grant.
-            if (state.pinchDistance === 0) {
-              state.pinchDistance = distance;
-              state.startScale = state.scale;
+            if (state.current.pinchDistance === 0) {
+              state.current.pinchDistance = distance;
+              state.current.startScale = state.current.scale;
 
               return;
             }
 
             // Unclamped on purpose — release is where it settles, so a pinch
             // past the end gives rather than hitting a wall.
-            const next = state.startScale * (distance / state.pinchDistance);
+            const next = state.current.startScale * (distance / state.current.pinchDistance);
 
-            state.scale = next;
+            state.current.scale = next;
             scale.setValue(next);
 
             return;
           }
 
-          if (state.scale > MIN_SCALE) {
-            const x = state.startX + gesture.dx;
-            const y = state.startY + gesture.dy;
+          if (state.current.scale > MIN_SCALE) {
+            const x = state.current.startX + gesture.dx;
+            const y = state.current.startY + gesture.dy;
 
-            state.x = x;
-            state.y = y;
+            state.current.x = x;
+            state.current.y = y;
             offsetX.setValue(x);
             offsetY.setValue(y);
           }
         },
 
         onPanResponderRelease: (event, gesture) => {
-          const wasPinching = state.pinchDistance > 0;
+          const wasPinching = state.current.pinchDistance > 0;
           const moved = Math.abs(gesture.dx) > TAP_SLOP || Math.abs(gesture.dy) > TAP_SLOP;
 
-          state.pinchDistance = 0;
+          state.current.pinchDistance = 0;
 
           if (!wasPinching && !moved) {
             handleTap(event);
@@ -267,12 +280,12 @@ export function ImageViewer({ visible, url, path, label, onClose }: ImageViewerP
           // Settle: clamp the scale, and drop back to centre whenever the photo
           // is no longer larger than its frame — an offset at fit-scale would
           // leave the picture sitting off to one side with nothing to pan back.
-          const clamped = Math.min(MAX_SCALE, Math.max(MIN_SCALE, state.scale));
+          const clamped = Math.min(MAX_SCALE, Math.max(MIN_SCALE, state.current.scale));
 
           apply(
             clamped <= MIN_SCALE
               ? { scale: MIN_SCALE, x: 0, y: 0 }
-              : { scale: clamped, ...clampOffset(clamped, state.x, state.y) },
+              : { scale: clamped, ...clampOffset(clamped, state.current.x, state.current.y) },
             true,
           );
         },
@@ -308,9 +321,9 @@ export function ImageViewer({ visible, url, path, label, onClose }: ImageViewerP
 
   function handleTap(event: GestureResponderEvent) {
     const now = Date.now();
-    const isDouble = now - state.lastTapAt < DOUBLE_TAP_MS;
+    const isDouble = now - state.current.lastTapAt < DOUBLE_TAP_MS;
 
-    state.lastTapAt = isDouble ? 0 : now;
+    state.current.lastTapAt = isDouble ? 0 : now;
 
     if (isDouble) {
       cancelTapTimer();
@@ -318,7 +331,7 @@ export function ImageViewer({ visible, url, path, label, onClose }: ImageViewerP
       // Zoom toward the point that was tapped rather than the centre: the
       // offset that keeps a tapped point still under the finger is its distance
       // from the centre, scaled by how much bigger everything just got.
-      if (state.scale > MIN_SCALE) {
+      if (state.current.scale > MIN_SCALE) {
         apply({ scale: MIN_SCALE, x: 0, y: 0 }, true);
 
         return;
@@ -345,7 +358,7 @@ export function ImageViewer({ visible, url, path, label, onClose }: ImageViewerP
     cancelTapTimer();
     tapTimer.current = setTimeout(() => {
       tapTimer.current = null;
-      if (state.scale <= MIN_SCALE) closeRef.current();
+      if (state.current.scale <= MIN_SCALE) closeRef.current();
     }, DOUBLE_TAP_MS);
   }
 
@@ -423,7 +436,7 @@ const styles = StyleSheet.create({
   // Not `absoluteFill`: filling by flex is what lets `contain` measure against
   // the real frame rather than against an unbounded box.
   image: { width: '100%', height: '100%' },
-  spinner: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' },
+  spinner: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center' },
   close: { position: 'absolute', right: Spacing.lg },
   closeWell: {
     width: 40,

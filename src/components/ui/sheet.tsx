@@ -91,26 +91,40 @@ export function Sheet({
   /** The panel's own height, so it travels exactly its length and no more. */
   const [travel, setTravel] = useState(FALLBACK_TRAVEL);
 
-  const progress = useRef(new Animated.Value(0)).current;
-  const drag = useRef(new Animated.Value(0)).current;
-  const contentOpacity = useRef(new Animated.Value(1)).current;
-  const contentShift = useRef(new Animated.Value(0)).current;
+  const [progress] = useState(() => new Animated.Value(0));
+  const [drag] = useState(() => new Animated.Value(0));
+  const [contentOpacity] = useState(() => new Animated.Value(1));
+  const [contentShift] = useState(() => new Animated.Value(0));
 
   /**
    * `onClose` and `dismissible` through refs: the responder below is built once
    * for the life of the component, while both props are fresh on every render
    * of the screen holding the sheet. Reading them at gesture time is what stops
    * the drag holding the first render's closure forever.
+   *
+   * The mirrors are written in an effect rather than during render: a ref
+   * touched mid-render is what React Compiler refuses (`react-hooks/refs`), and
+   * a gesture can only fire after the commit that effect belongs to.
    */
   const closeRef = useRef(onClose);
   const dismissibleRef = useRef(dismissible);
 
-  closeRef.current = onClose;
-  dismissibleRef.current = dismissible;
+  useEffect(() => {
+    closeRef.current = onClose;
+    dismissibleRef.current = dismissible;
+  }, [dismissible, onClose]);
+
+  /*
+    Mounting is adjusted during render rather than in the effect below: the
+    Modal has to exist in the very frame the entrance animation starts, and
+    setting it from an effect costs an extra commit — which React Compiler also
+    reads as a cascading render. Unmounting stays in the effect, because it is
+    the exit's completion that decides it.
+  */
+  if (visible && !mounted) setMounted(true);
 
   useEffect(() => {
     if (visible) {
-      setMounted(true);
       drag.setValue(0);
       Animated.timing(progress, {
         toValue: 1,
@@ -167,9 +181,16 @@ export function Sheet({
    * every sheet in this app holds either a scroll view or a text field, and a
    * responder over those competes for the same downward drag. The handle is the
    * one strip that owns nothing else, which is what a grabber is for.
+   *
+   * The rule below reads every `.current` inside a `useMemo` as a render-time
+   * access, and for a `PanResponder` it cannot be one: the factory returns
+   * handlers, and a handler runs when a finger moves. Building the responder
+   * anywhere else means rebuilding it whenever a prop changes, which is the
+   * stale-closure problem these mirrors exist to avoid.
    */
   const responder = useMemo(
     () =>
+      // eslint-disable-next-line react-hooks/refs
       PanResponder.create({
         onMoveShouldSetPanResponder: (_event, gesture) =>
           dismissibleRef.current && gesture.dy > 4 && Math.abs(gesture.dy) > Math.abs(gesture.dx),
@@ -231,7 +252,7 @@ export function Sheet({
         <View style={styles.backdrop}>
           <Animated.View
             style={[
-              StyleSheet.absoluteFillObject,
+              StyleSheet.absoluteFill,
               { backgroundColor: colors.overlay, opacity: progress },
             ]}>
             <Pressable

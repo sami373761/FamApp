@@ -148,8 +148,7 @@ function AvatarBody({
 
 const styles = StyleSheet.create({
   avatar: { alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
-  // RN 0.81: `absoluteFill` is a registered style ID; `absoluteFillObject` is the spreadable one.
-  image: { ...StyleSheet.absoluteFillObject },
+  image: { ...StyleSheet.absoluteFill },
   // Always white: member colours are chosen to carry white text in both schemes.
   initials: { color: '#FFFFFF' },
   // A gap between ring and memoji, so the ring reads as a state around the face

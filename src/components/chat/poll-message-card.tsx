@@ -26,7 +26,7 @@
  */
 
 import { Ionicons } from '@expo/vector-icons';
-import { useEffect, useRef } from 'react';
+import { useEffect, useState } from 'react';
 import { ActivityIndicator, Animated, Easing, StyleSheet, View } from 'react-native';
 
 import { Avatar } from '@/components/ui/avatar';
@@ -207,7 +207,7 @@ function PollOption({ option, voters, hasVotes, disabled, onPress }: PollOptionP
     percentage string is what keeps the bar correct at every row width without
     measuring anything.
   */
-  const share = useRef(new Animated.Value(option.percent)).current;
+  const [share] = useState(() => new Animated.Value(option.percent));
 
   useEffect(() => {
     Animated.timing(share, {

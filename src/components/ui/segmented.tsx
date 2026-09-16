@@ -64,8 +64,8 @@ export function Segmented<T extends string>({
   const segmentWidth =
     options.length > 0 ? (inner - Spacing.xs * (options.length - 1)) / options.length : 0;
 
-  const offset = useRef(new Animated.Value(0)).current;
-  const presence = useRef(new Animated.Value(0)).current;
+  const [offset] = useState(() => new Animated.Value(0));
+  const [presence] = useState(() => new Animated.Value(0));
   /**
    * Whether the thumb has ever been put somewhere. The first measured layout
    * has to *place* it — animating from x=0 would slide it in from the track's

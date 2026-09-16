@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { Tabs } from 'expo-router';
+import { Tabs } from 'expo-router/js-tabs';
 import { StyleSheet } from 'react-native';
 
 import { useTabBarMetrics } from '@/hooks/use-tab-bar';
@@ -19,7 +19,9 @@ const TAB_ICON_SIZE = 28;
  * Bottom tab navigator.
  *
  * Uses expo-router's JS `Tabs` (rather than NativeTabs) so the five tabs render
- * and theme identically on iOS and Android.
+ * and theme identically on iOS and Android. In expo-router 7 that import moved
+ * to `expo-router/js-tabs`; the `Tabs` still exported from `expo-router` itself
+ * is deprecated.
  *
  * The bar is a floating island: detached from the bottom edge, inset from both
  * sides and fully rounded, so the canvas runs behind it. That is a layout

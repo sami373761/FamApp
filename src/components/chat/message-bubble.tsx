@@ -243,14 +243,27 @@ function ChatImage({
   const [url, setUrl] = useState<string | null>(null);
   const [isViewerOpen, setIsViewerOpen] = useState(false);
 
-  useEffect(() => {
-    let cancelled = false;
+  /*
+    The reset is adjusted during render rather than at the top of the effect
+    below. A recycled bubble is a different photo, and resetting from an effect
+    leaves one frame in which the *old* photo's signed URL is rendered under the
+    new path — as well as being the cascading render React Compiler refuses. The
+    effect is left with the one thing that has to happen after the commit: the
+    request.
+  */
+  const [signedPath, setSignedPath] = useState(path);
 
+  if (path !== signedPath) {
+    setSignedPath(path);
     setStatus('signing');
     setUrl(null);
-    // A recycled bubble is a different photo; leaving the viewer open across
-    // that swap would show the new one under the old one's gesture.
+    // Leaving the viewer open across that swap would show the new photo under
+    // the old one's gesture.
     setIsViewerOpen(false);
+  }
+
+  useEffect(() => {
+    let cancelled = false;
 
     void getSignedMediaUrl(path).then(({ data, error }) => {
       if (cancelled || !isMounted()) return;
@@ -367,7 +380,7 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.xs,
   },
   imageOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     alignItems: 'center',
     justifyContent: 'center',
     gap: Spacing.xs,

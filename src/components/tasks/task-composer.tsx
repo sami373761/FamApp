@@ -419,7 +419,7 @@ function DisclosureRow({
 
   // RN Web has no native animated module; asking for one only earns a warning.
   const useNativeDriver = Platform.OS !== 'web';
-  const turn = useRef(new Animated.Value(expanded ? 1 : 0)).current;
+  const [turn] = useState(() => new Animated.Value(expanded ? 1 : 0));
 
   /*
     One chevron that turns, rather than two glyphs swapped between frames. The
@@ -496,7 +496,7 @@ function DisclosureRow({
  */
 function DisclosurePanel({ children }: { children: ReactNode }) {
   const useNativeDriver = Platform.OS !== 'web';
-  const enter = useRef(new Animated.Value(0)).current;
+  const [enter] = useState(() => new Animated.Value(0));
 
   useEffect(() => {
     Animated.timing(enter, {

@@ -149,7 +149,7 @@ const styles = StyleSheet.create({
   // card at rest looks exactly as it does anywhere else in the app.
   track: { borderRadius: Radius.lg, overflow: 'hidden', ...Shadow.card },
   action: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.sm,

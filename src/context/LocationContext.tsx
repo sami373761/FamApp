@@ -119,7 +119,12 @@ export function LocationProvider({ children }: { children: ReactNode }) {
    */
   const shareBattery = useRef(preferences.batterySharing);
 
-  shareBattery.current = preferences.batterySharing;
+  // In an effect, not during render: a ref written mid-render is what React
+  // Compiler refuses, and every reader of this one is a timer or a callback
+  // that cannot run before the commit.
+  useEffect(() => {
+    shareBattery.current = preferences.batterySharing;
+  }, [preferences.batterySharing]);
 
   const [isSyncing, setIsSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);

@@ -470,11 +470,15 @@ export default function ChatScreen() {
   const confirmPhoto = useCallback(
     async (caption: string) => {
       const asset = pendingAsset;
+      // Read once into a local: narrowing `profile?.family_id` and then reading
+      // it back off `profile` is what makes React Compiler infer `profile` as
+      // the dependency and give up on memoising this whole screen.
+      const familyId = profile?.family_id;
 
       setSheet('none');
       setPendingAsset(null);
 
-      if (!asset || !profile?.family_id) return;
+      if (!asset || !familyId) return;
 
       // Decided once, used three times: the placeholder, the object name and
       // the row's primary key are one id, which is what lets the confirmed
@@ -500,7 +504,7 @@ export default function ChatScreen() {
         return;
       }
 
-      const uploaded = await uploadChatImage(profile.family_id, messageId, compressed.data);
+      const uploaded = await uploadChatImage(familyId, messageId, compressed.data);
 
       if (uploaded.error) {
         discardImage(messageId);

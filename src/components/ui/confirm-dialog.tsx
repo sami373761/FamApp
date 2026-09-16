@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Animated, Easing, Modal, Platform, Pressable, StyleSheet, View } from 'react-native';
 
 import { Button } from '@/components/ui/button';
@@ -74,11 +74,16 @@ export function ConfirmDialog({
 
   // The Modal outlives `visible` by one animation; see `Sheet`.
   const [mounted, setMounted] = useState(visible);
-  const progress = useRef(new Animated.Value(0)).current;
+  const [progress] = useState(() => new Animated.Value(0));
+
+  /*
+    Mounted during render, unmounted by the exit's completion — see `Sheet`, for
+    the same reason: the Modal has to exist in the frame the entrance starts.
+  */
+  if (visible && !mounted) setMounted(true);
 
   useEffect(() => {
     if (visible) {
-      setMounted(true);
       Animated.timing(progress, {
         toValue: 1,
         duration: Motion.duration.base,
@@ -120,7 +125,7 @@ export function ConfirmDialog({
       <View style={styles.backdrop}>
         <Animated.View
           style={[
-            StyleSheet.absoluteFillObject,
+            StyleSheet.absoluteFill,
             { backgroundColor: colors.overlay, opacity: progress },
           ]}>
           <Pressable

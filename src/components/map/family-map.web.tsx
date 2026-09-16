@@ -279,7 +279,7 @@ export function FamilyMap({
 }
 
 const styles = StyleSheet.create({
-  map: { ...StyleSheet.absoluteFillObject, overflow: 'hidden' },
+  map: { ...StyleSheet.absoluteFill, overflow: 'hidden' },
   tile: { position: 'absolute', width: TILE_SIZE, height: TILE_SIZE },
   pin: { position: 'absolute' },
   attribution: {

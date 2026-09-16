@@ -10,6 +10,9 @@ export function useColorScheme() {
   useEffect(() => {
     // Intentional: this effect exists solely to detect that hydration has
     // completed on the client, so the setState must run synchronously here.
+    // The rule arrived with eslint-plugin-react-hooks 6 (eslint-config-expo 57);
+    // under 5.x naming it in a disable comment was itself a lint error.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setHasHydrated(true);
   }, []);
 

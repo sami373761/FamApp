@@ -3,7 +3,7 @@
  * https://docs.expo.dev/guides/color-schemes/
  */
 
-import { DarkTheme, DefaultTheme, type Theme as NavigationTheme } from '@react-navigation/native';
+import { DarkTheme, DefaultTheme, type Theme as NavigationTheme } from 'expo-router';
 import { useMemo } from 'react';
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -40,6 +40,10 @@ export function useTheme(): Theme {
  * `rgb(242, 242, 242)` (light) and `rgb(1, 1, 1)` (dark) — neither is ours, so
  * the canvas read grey no matter what the screens set. Anything not listed here
  * (notably `fonts`) is inherited from the stock theme unchanged.
+ *
+ * expo-router 7 vendors React Navigation, so `DarkTheme` / `DefaultTheme` /
+ * `Theme` are imported from `expo-router` rather than `@react-navigation/native`,
+ * which is no longer a dependency of this project at all.
  */
 export function useNavigationTheme(): NavigationTheme {
   const { colors, isDark } = useTheme();
